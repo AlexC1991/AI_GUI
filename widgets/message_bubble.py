@@ -252,20 +252,25 @@ class ThinkingBubble(QWidget):
         self.dots = []
         for _ in range(3):
             dot = QLabel("●")
-            dot.setStyleSheet("font-size: 10px; color: #666;")
+            dot.setStyleSheet("font-size: 10px; color: #666;") 
             dots_layout.addWidget(dot)
             self.dots.append(dot)
 
         self.layout.addWidget(self.bubble_frame)
-        self.layout.addStretch()
+        self.layout.addStretch() 
 
         self.current_dot = 0
         self.timer = QTimer(self)
         self.timer.timeout.connect(self.animate_dots)
-        self.timer.start(300)
+        self.timer.start(300) 
 
     def animate_dots(self):
+        # Reset all dots to gray
         for dot in self.dots:
-            dot.setStyleSheet("font-size: 14px; color: #666;")
-        self.dots[self.current_dot].setStyleSheet("font-size: 14px; color: #FFF;")
+            dot.setStyleSheet("font-size: 14px; color: #666;") 
+        
+        # Highlight the current dot (White)
+        self.dots[self.current_dot].setStyleSheet("font-size: 14px; color: #FFF;") 
+        
+        # Move to next dot
         self.current_dot = (self.current_dot + 1) % 3

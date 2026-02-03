@@ -1,66 +1,78 @@
-\# Project Overview: VoxAI Orchestrator
+# Project Overview: AI_GUI (VoxAI Orchestrator)
 
+## 🎯 The Vision
 
+AI_GUI is the "Operating System" for local AI. Instead of juggling multiple applications (ComfyUI for images, Ollama for chat, separate code editors), AI_GUI brings them into a single, native, high-performance desktop application optimized for AMD GPUs via ZLUDA.
 
-\## 🎯 The Vision
+## 🏗 Architecture
 
-VoxAI Orchestrator aims to be the "Operating System" for local AI. Instead of opening 5 different browser tabs (one for ChatGPT, one for Automatic1111, one for a Code Editor), VoxAI brings them into a single, native, high-performance desktop application.
+The project uses a **Modular Frontend** with a **Native Backend** approach.
 
+### Frontend
+- **Framework:** PySide6 (Qt6) desktop application
+- **Layout:** Sidebar navigation with switchable views (Chat, Image Gen, Gallery, Settings)
+- **Theme:** Dark mode with modern styling
 
+### Backend (Implemented)
+- **Chat:** 
+  - Ollama integration (local LLMs)
+  - Gemini API support (cloud)
+  - Real-time streaming responses
+  
+- **Image Generation:**
+  - Native Diffusers backend (no ComfyUI dependency)
+  - Multi-model support: SD 1.5, SD 2.x, SDXL, Pony, Flux
+  - GGUF quantized model support for low VRAM
+  - ZLUDA optimization for AMD GPUs
+  - Custom VAE, LoRA, and Text Encoder support
+  - CPU offload for 8GB VRAM systems
 
-\## 🏗 Architecture
+- **Hardware:**
+  - AMD GPU support via ZLUDA
+  - Real-time VRAM/RAM monitoring
+  - Automatic model family detection
+  - Memory-optimized loading strategies
 
+## 🎮 Supported Models
 
+| Model Type | VRAM Required | Status |
+|------------|---------------|--------|
+| SD 1.5 | ~4GB | ✅ Working |
+| SD 2.x | ~5GB | ✅ Working |
+| SDXL | ~6GB | ✅ Working |
+| Pony (SDXL-based) | ~6GB | ✅ Working |
+| Flux (GGUF Q4) | ~8GB | ✅ Working |
+| Flux (safetensors) | 12GB+ | ✅ Working |
 
-The project is designed with a \*\*Modular Frontend\*\* and a \*\*Pluggable Backend\*\*.
+## 🛣 Roadmap
 
+### Phase 1: UI & UX (✅ Completed)
+- [x] Dark Mode Theme
+- [x] Chat Interface with Code Highlighting
+- [x] Image Gen Interface with LoRA Stacking
+- [x] Global Settings Menu
+- [x] Navigation & View Switching
+- [x] Gallery with metadata display
 
+### Phase 2: Backend Integration (✅ Completed)
+- [x] Ollama LLM integration
+- [x] Gemini API integration
+- [x] Native Diffusers image generation
+- [x] Multi-model family support (SD1.5, SDXL, Pony, Flux)
+- [x] ZLUDA/AMD GPU optimization
+- [x] Custom VAE/LoRA/Text Encoder loading
+- [x] GGUF quantized model support
 
-\* \*\*Frontend (Current State):\*\* A PySide6 desktop application that handles all user interaction, layout, and visualization.
+### Phase 3: Advanced Features (🚧 In Progress)
+- [x] GGUF Flux transformer support (low VRAM)
+- [x] Automatic dtype handling (bfloat16/float16)
+- [ ] ControlNet support
+- [ ] Inpainting/Outpainting
+- [ ] Batch generation
+- [ ] Prompt queue system
 
-\* \*\*Backend (Planned):\*\*
-
-&nbsp;   \* \*\*Chat:\*\* Will connect via API to local endpoints (Ollama, LM Studio) or Cloud Providers (OpenAI/Anthropic).
-
-&nbsp;   \* \*\*Images:\*\* Will act as a frontend for \*\*ComfyUI\*\*. The "Node Graph" will run headless in the background, while VoxAI provides the user-friendly "Rack" interface.
-
-&nbsp;   \* \*\*Audio:\*\* Planned integration with RVC (Voice Conversion) and Suno/Bark models.
-
-
-
-\## 🛣 Roadmap
-
-
-
-\### Phase 1: UI \& UX (✅ Completed)
-
-\* \[x] Dark Mode Theme.
-
-\* \[x] Chat Interface with Code Highlighting.
-
-\* \[x] Image Gen Interface with LoRA Stacking.
-
-\* \[x] Global Settings Menu.
-
-\* \[x] Navigation \& View Switching.
-
-
-
-\### Phase 2: Functionality Wiring (🚧 Next Steps)
-
-\* \[ ] \*\*Settings Persistence:\*\* Save paths and API keys to `config.json` or `.env`.
-
-\* \[ ] \*\*Local LLM Hookup:\*\* Connect Chat window to an Ollama instance.
-
-\* \[ ] \*\*Image Gen Hookup:\*\* Send API requests to a local ComfyUI instance to generate real images.
-
-\* \[ ] \*\*File Handling:\*\* Allow drag-and-drop uploads for RAG (Retrieval Augmented Generation).
-
-
-
-\### Phase 3: Advanced Features
-
-\* \[ ] \*\*Remote Server Mode:\*\* Allow the GUI to run on a powerful desktop while being controlled by a laptop over the network.
-
-\* \[ ] \*\*Voice Mode:\*\* Real-time speech-to-text and text-to-speech conversation.
-
+### Phase 4: Future Enhancements
+- [ ] Remote Server Mode (network control)
+- [ ] Voice Mode (STT/TTS)
+- [ ] Video generation support
+- [ ] Plugin system for custom nodes

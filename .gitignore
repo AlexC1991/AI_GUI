@@ -1,0 +1,29 @@
+# Models
+models/
+
+# Cache
+cache/
+__pycache__/
+.cache/
+.hf_cache/
+
+# Virtual Environment
+venv/
+.venv/
+
+# Workspace and Temporary files
+temp_workspace/
+outputs/
+temp/
+tmp/
+
+# IDE and Project files
+.idea/
+.vscode/
+
+# Environment variables
+.env
+
+# OS specific
+Thumbs.db
+Desktop.ini

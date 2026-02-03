@@ -1,8 +1,10 @@
 ﻿from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QLabel, QLineEdit, QComboBox,
-    QPushButton, QScrollArea, QFrame, QFileDialog, QCheckBox, QHBoxLayout, QGroupBox, QMessageBox
+    QPushButton, QScrollArea, QFrame, QFileDialog, QHBoxLayout, QGroupBox, QMessageBox, QTabWidget, QCheckBox
 )
 from PySide6.QtCore import Qt, QTimer
+from widgets.model_manager_dialog import ModelManagerDialog
+from utils.config_manager import ConfigManager
 
 class SettingsView(QScrollArea):
     def __init__(self):
@@ -143,39 +145,84 @@ class SettingsView(QScrollArea):
         line.setStyleSheet("background-color: #333; margin: 10px 0;")
         layout.addWidget(line)
 
+        # Load defaults
+        self.config = ConfigManager.load_config()
+        llm_cfg = self.config.get("llm", {})
+        
+        self.provider_combo.setCurrentText(llm_cfg.get("provider", "Google Gemini"))
+        self.api_key_input.setText(llm_cfg.get("api_key", ""))
+
+        # --- LOCAL MODELS MANAGER ---
+        mgr_layout = QHBoxLayout()
+        mgr_layout.addWidget(QLabel("Local Models (Ollama):"))
+        mgr_btn = QPushButton("Manage / Download Models")
+        mgr_btn.setCursor(Qt.PointingHandCursor)
+        mgr_btn.setStyleSheet("background-color: #006666; padding: 6px;")
+        mgr_btn.clicked.connect(self.open_model_manager)
+        mgr_layout.addWidget(mgr_btn)
+        layout.addLayout(mgr_layout)
+
         # --- LOCAL PATHS ---
         layout.addWidget(QLabel("Local Models Directory:"))
-        self.llm_path = self.create_file_browser_row()
-        layout.addLayout(self.llm_path)
+        lyt, self.txt_llm_path = self.create_file_browser_row(llm_cfg.get("local_model_dir", "models/llm"))
+        layout.addLayout(lyt)
 
         layout.addWidget(QLabel("Local Cache Directory:"))
-        self.cache_path = self.create_file_browser_row()
-        layout.addLayout(self.cache_path)
+        lyt, self.txt_cache_path = self.create_file_browser_row(llm_cfg.get("cache_dir", "cache"))
+        layout.addLayout(lyt)
 
         # Apply
         apply_btn = QPushButton("Apply LLM Settings")
         apply_btn.setObjectName("ApplyBtn")
+        apply_btn.clicked.connect(self.save_llm_settings)
         layout.addWidget(apply_btn, 0, Qt.AlignRight)
 
         self.main_layout.addWidget(group)
+        
+    def open_model_manager(self):
+        dlg = ModelManagerDialog(self)
+        dlg.exec()
+
+    def save_llm_settings(self):
+        cfg = self.config
+        if "llm" not in cfg: cfg["llm"] = {}
+        
+        cfg["llm"]["provider"] = self.provider_combo.currentText()
+        cfg["llm"]["api_key"] = self.api_key_input.text().strip()
+        cfg["llm"]["local_model_dir"] = self.txt_llm_path.text()
+        cfg["llm"]["cache_dir"] = self.txt_cache_path.text()
+        
+        ConfigManager.save_config(cfg)
+        QMessageBox.information(self, "Settings Saved", "LLM settings updated successfully!")
 
     def create_image_section(self):
         group = QGroupBox("Image Generation Paths")
         layout = QVBoxLayout(group)
         layout.setSpacing(15)
         layout.setContentsMargins(20, 35, 20, 20)
+        
+        self.config = ConfigManager.load_config()
+        img_cfg = self.config.get("image", {})
 
         layout.addWidget(QLabel("Output Directory:"))
-        self.img_out_path = self.create_file_browser_row()
-        layout.addLayout(self.img_out_path)
+        lyt, self.txt_out_dir = self.create_file_browser_row(img_cfg.get("output_dir", "outputs/images"))
+        layout.addLayout(lyt)
 
         layout.addWidget(QLabel("Checkpoints Directory:"))
-        self.ckpt_path = self.create_file_browser_row()
-        layout.addLayout(self.ckpt_path)
+        lyt, self.txt_ckpt_dir = self.create_file_browser_row(img_cfg.get("checkpoint_dir", "models/checkpoints"))
+        layout.addLayout(lyt)
 
         layout.addWidget(QLabel("LoRA Directory:"))
-        self.lora_path = self.create_file_browser_row()
-        layout.addLayout(self.lora_path)
+        lyt, self.txt_lora_dir = self.create_file_browser_row(img_cfg.get("lora_dir", "models/loras"))
+        layout.addLayout(lyt)
+
+        layout.addWidget(QLabel("VAE Directory:"))
+        lyt, self.txt_vae_dir = self.create_file_browser_row(img_cfg.get("vae_dir", "models/vae"))
+        layout.addLayout(lyt)
+
+        layout.addWidget(QLabel("Text Encoder Directory:"))
+        lyt, self.txt_text_enc_dir = self.create_file_browser_row(img_cfg.get("text_encoder_dir", "models/text_encoders"))
+        layout.addLayout(lyt)
 
         layout.addWidget(QLabel("Prompt Refiner Model (LLM):"))
         self.img_model_combo = QComboBox()
@@ -185,9 +232,24 @@ class SettingsView(QScrollArea):
         # Apply
         apply_btn = QPushButton("Apply Image Settings")
         apply_btn.setObjectName("ApplyBtn")
+        apply_btn.clicked.connect(self.save_image_settings)
         layout.addWidget(apply_btn, 0, Qt.AlignRight)
 
         self.main_layout.addWidget(group)
+        
+    def save_image_settings(self):
+        cfg = self.config
+        if "image" not in cfg: cfg["image"] = {}
+        
+        cfg["image"]["output_dir"] = self.txt_out_dir.text()
+        cfg["image"]["checkpoint_dir"] = self.txt_ckpt_dir.text()
+        cfg["image"]["lora_dir"] = self.txt_lora_dir.text()
+        cfg["image"]["vae_dir"] = self.txt_vae_dir.text()
+        cfg["image"]["text_encoder_dir"] = self.txt_text_enc_dir.text()
+        
+        ConfigManager.save_config(cfg)
+        QMessageBox.information(self, "Settings Saved", "Image paths updated successfully!") 
+
 
     def create_remote_section(self):
         group = QGroupBox("Remote Resources & Cloud Storage")
@@ -328,16 +390,16 @@ class SettingsView(QScrollArea):
 
         self.main_layout.addWidget(group)
 
-    def create_file_browser_row(self):
+    def create_file_browser_row(self, default_text=""):
         layout = QHBoxLayout()
-        line_edit = QLineEdit()
+        line_edit = QLineEdit(default_text)
         browse_btn = QPushButton("Browse")
         browse_btn.setCursor(Qt.PointingHandCursor)
         browse_btn.clicked.connect(lambda: self.browse_folder(line_edit))
 
         layout.addWidget(line_edit)
         layout.addWidget(browse_btn)
-        return layout
+        return layout, line_edit
 
     def browse_folder(self, line_edit_widget):
         folder = QFileDialog.getExistingDirectory(self, "Select Directory")

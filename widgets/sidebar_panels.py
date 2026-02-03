@@ -1,12 +1,89 @@
-﻿from PySide6.QtWidgets import (
+"""
+AI_GUI - Sidebar Panels
+Fixed for Windows 11 (uses PowerShell instead of deprecated wmic)
+"""
+from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel, QFrame,
     QComboBox, QSpinBox, QAbstractSpinBox, QProgressBar
 )
 from PySide6.QtCore import Qt
 import platform
-import psutil
 import subprocess
 import sys
+
+# Try to import psutil, but don't crash if missing
+try:
+    import psutil
+    PSUTIL_AVAILABLE = True
+except ImportError:
+    PSUTIL_AVAILABLE = False
+
+
+def get_system_specs_powershell():
+    """
+    Get system specs using PowerShell (Windows 11 compatible).
+    Falls back to platform module if PowerShell fails.
+    """
+    specs = {
+        "cpu": "Unknown CPU",
+        "gpu": "Unknown GPU", 
+        "ram_text": "Unknown",
+        "ram_percent": 0,
+        "os": f"{platform.system()} {platform.release()}"
+    }
+    
+    if sys.platform != "win32":
+        specs["cpu"] = platform.processor() or "Unknown CPU"
+        return specs
+    
+    # CPU - PowerShell
+    try:
+        cmd = 'powershell -Command "Get-CimInstance Win32_Processor | Select-Object -ExpandProperty Name"'
+        result = subprocess.run(cmd, capture_output=True, text=True, shell=True, timeout=5)
+        if result.returncode == 0 and result.stdout.strip():
+            specs["cpu"] = result.stdout.strip().split('\n')[0]
+    except Exception:
+        specs["cpu"] = platform.processor() or "Unknown CPU"
+    
+    # GPU - PowerShell
+    try:
+        cmd = 'powershell -Command "Get-CimInstance Win32_VideoController | Select-Object -ExpandProperty Name"'
+        result = subprocess.run(cmd, capture_output=True, text=True, shell=True, timeout=5)
+        if result.returncode == 0 and result.stdout.strip():
+            # Get first GPU (might have multiple)
+            gpus = [g.strip() for g in result.stdout.strip().split('\n') if g.strip()]
+            if gpus:
+                # Prefer discrete GPU over integrated
+                for gpu in gpus:
+                    if any(x in gpu.lower() for x in ['nvidia', 'radeon', 'geforce', 'rtx', 'gtx', 'rx ']):
+                        specs["gpu"] = gpu
+                        break
+                else:
+                    specs["gpu"] = gpus[0]
+    except Exception:
+        pass
+    
+    # RAM - psutil
+    if PSUTIL_AVAILABLE:
+        try:
+            mem = psutil.virtual_memory()
+            specs["ram_text"] = f"{round(mem.used/1024**3, 1)}/{round(mem.total/1024**3, 1)} GB"
+            specs["ram_percent"] = mem.percent
+        except Exception:
+            pass
+    
+    return specs
+
+
+# Cache specs so we don't call PowerShell repeatedly
+_cached_specs = None
+
+def get_cached_specs():
+    global _cached_specs
+    if _cached_specs is None:
+        _cached_specs = get_system_specs_powershell()
+    return _cached_specs
+
 
 # ============================================
 # 1. CHAT OPTIONS PANEL
@@ -19,10 +96,13 @@ class ChatOptionsPanel(QWidget):
             QWidget { color: #CCCCCC; font-family: Segoe UI, sans-serif; font-size: 12px; background: transparent; }
             QLabel { font-weight: bold; margin-top: 5px; border: none; }
             QPushButton, QComboBox, QSpinBox {
-                background-color: #333; border: 1px solid #444; border-radius: 4px; color: white; padding: 5px; min-height: 15px;
+                background-color: #333; border: 1px solid #444; border-radius: 4px; color: white; padding: 5px; min-height: 25px;
             }
             #ModeBox, #MemoryBox, #CloudBox, #ModelBox { padding-left: 8px; }
             QComboBox::drop-down { border: none; }
+            QComboBox QAbstractItemView {
+                background-color: #2E2E2E; color: white; selection-background-color: #006666; min-width: 150px;
+            }
             QSpinBox::up-button, QSpinBox::down-button { width: 0px; border: none; }
             QPushButton { background-color: #2E2E2E; }
             QPushButton:hover { background-color: #3E3E3E; }
@@ -72,7 +152,8 @@ class ChatOptionsPanel(QWidget):
         layout.addWidget(QLabel("Model:"), alignment=Qt.AlignHCenter)
         self.model_combo = QComboBox()
         self.model_combo.setObjectName("ModelBox")
-        self.model_combo.addItems(["Llama 3", "Mistral", "Gemma"])
+        self.model_combo.setEditable(True) # Allow typing custom tags (e.g. ministral:8b)
+        self.model_combo.addItems(["Llama 3", "Ministral 8B", "Mistral", "Gemma"])
         layout.addWidget(self.model_combo)
 
         layout.addSpacing(15)
@@ -89,17 +170,44 @@ class ChatOptionsPanel(QWidget):
 
         layout.addStretch()
 
+        self.local_models_cache = [] # Cache for local models
+
+    def set_local_models(self, models):
+        """Called by MainWindow to update the list with real installed models"""
+        self.local_models_cache = models if models else []
+        
+        # Only update combo if we are currently in Local mode
+        if self.mode_combo.currentText() == "Local":
+            current = self.model_combo.currentText()
+            self.model_combo.clear()
+            if self.local_models_cache:
+                self.model_combo.addItems(self.local_models_cache)
+            else:
+                self.model_combo.addItems(["(No models found)"])
+            
+            # Try to restore selection
+            if current in self.local_models_cache:
+                self.model_combo.setCurrentText(current)
+            elif not current or current == "Loading..." or current == "(No models found)":
+                # Initial blank state
+                self.model_combo.setCurrentIndex(-1)
+    
     def _update_models(self, mode):
         self.model_combo.clear()
         if mode == "Local":
-            self.model_combo.addItems(["Llama 3", "Mistral", "Gemma"])
+            # Restore cached local models
+            if self.local_models_cache:
+                self.model_combo.addItems(self.local_models_cache)
+            else:
+                self.model_combo.addItems(["Loading..."])
         else:
-            self.model_combo.addItems(["GPT-4o", "Claude 3.5", "Gemini Pro"])
+            self.model_combo.addItems(["Gemini Pro", "GPT-4o", "Claude 3.5"])
 
     def update_status(self, state):
         color = "#00FF00" if state.lower() == "idle" else "#00FFFF"
         self.status_label.setText(f"Status: {state.title()}")
         self.status_label.setStyleSheet(f"color: {color}; font-weight: bold;")
+
 
 # ============================================
 # 2. IMAGE GEN PANEL
@@ -115,33 +223,30 @@ class ImageGenPanel(QWidget):
         # Header
         layout.addWidget(QLabel("System Info:", styleSheet="font-weight:bold; color:white; font-size:14px; margin-top:10px;"))
 
-        # --- HARDWARE STATS (Compact) ---
-        specs = self.get_system_specs()
+        # Get system specs (cached)
+        specs = get_cached_specs()
 
-        self.add_stat(layout, f"GPU: {specs['gpu']}", "Load: 0%", 0)
-        self.add_stat(layout, "VRAM (Est):", "4.2 / 24 GB", 18)
-        self.add_stat(layout, f"CPU: {specs['cpu']}", "Load: 12%", 12)
+        self.add_stat(layout, f"GPU:", specs['gpu'], 0)
+        self.add_stat(layout, "VRAM (Est):", "6.0 / 8.0 GB", 75)
+        self.add_stat(layout, f"CPU:", specs['cpu'][:30], 12)
         self.add_stat(layout, "System RAM:", specs['ram_text'], specs['ram_percent'])
-
-        # --- REFINER MODEL ---
-        line = QFrame()
-        line.setFrameShape(QFrame.HLine)
-        line.setStyleSheet("background-color: #444; margin: 10px 0;")
-        layout.addWidget(line)
-
-        layout.addWidget(QLabel("Refiner Model:", styleSheet="color:#CCC; font-weight:bold;"))
-        self.refiner_combo = QComboBox()
-        self.refiner_combo.addItems(["Local: SDXL Refiner", "Provider: Gemini Pro Vision", "None"])
-        self.refiner_combo.setStyleSheet("""
-            QComboBox { background: #333; border: 1px solid #444; color: white; padding: 5px; }
-            QComboBox::drop-down { border: none; }
-        """)
-        layout.addWidget(self.refiner_combo)
 
         # Spacer
         layout.addStretch()
 
-        # --- ACTION BUTTONS (Above Settings) ---
+        # --- ACTION BUTTONS ---
+        self.refresh_btn = QPushButton("Refresh Assets 🔄")
+        self.refresh_btn.setFixedHeight(30)
+        self.refresh_btn.setCursor(Qt.PointingHandCursor)
+        self.refresh_btn.setStyleSheet("""
+            QPushButton { 
+                background-color: #333333; color: #CCC; 
+                border: 1px solid #555; border-radius: 4px;
+            }
+            QPushButton:hover { background-color: #444444; color: white; }
+        """)
+        layout.addWidget(self.refresh_btn)
+
         self.gen_btn = QPushButton("GENERATE")
         self.gen_btn.setFixedHeight(45)
         self.gen_btn.setCursor(Qt.PointingHandCursor)
@@ -171,17 +276,16 @@ class ImageGenPanel(QWidget):
     def add_stat(self, layout, title, text, percent):
         container = QWidget()
         l = QVBoxLayout(container)
-        l.setContentsMargins(0,0,0,0)
+        l.setContentsMargins(0, 0, 0, 0)
         l.setSpacing(2)
 
-        # --- FIXED: QHBoxLayout is now imported ---
         row = QHBoxLayout()
         lbl = QLabel(title)
         lbl.setStyleSheet("color:#CCC; font-size:10px; font-weight:bold;")
         val = QLabel(text)
         val.setStyleSheet("color:#AAA; font-size:10px;")
         val.setAlignment(Qt.AlignRight)
-        row.addWidget(lbl, 1) # Stretch title
+        row.addWidget(lbl, 1)
         row.addWidget(val)
         l.addLayout(row)
 
@@ -190,36 +294,14 @@ class ImageGenPanel(QWidget):
         bar.setTextVisible(False)
         bar.setRange(0, 100)
         bar.setValue(int(percent))
-        bar.setStyleSheet("QProgressBar { background: #222; border: none; border-radius: 2px; } QProgressBar::chunk { background: #00AA00; border-radius: 2px; }")
+        bar.setStyleSheet("""
+            QProgressBar { background: #222; border: none; border-radius: 2px; } 
+            QProgressBar::chunk { background: #00AA00; border-radius: 2px; }
+        """)
         l.addWidget(bar)
 
         layout.addWidget(container)
 
-    def get_system_specs(self):
-        specs = { "cpu": "Unknown", "gpu": "Unknown", "ram_text": "Unknown", "ram_percent": 0 }
-
-        if sys.platform == "win32":
-            try:
-                cmd = "wmic cpu get name"
-                output = subprocess.check_output(cmd, shell=True).decode().strip()
-                lines = [line.strip() for line in output.split('\n') if line.strip()]
-                if len(lines) > 1: specs['cpu'] = lines[1]
-            except: specs['cpu'] = "CPU"
-
-            try:
-                cmd = "wmic path win32_VideoController get name"
-                output = subprocess.check_output(cmd, shell=True).decode().strip()
-                lines = [line.strip() for line in output.split('\n') if line.strip()]
-                if len(lines) > 1: specs['gpu'] = lines[1]
-            except: specs['gpu'] = "GPU"
-
-        try:
-            mem = psutil.virtual_memory()
-            specs['ram_text'] = f"{round(mem.used/1024**3, 1)}/{round(mem.total/1024**3, 1)} GB"
-            specs['ram_percent'] = mem.percent
-        except: pass
-
-        return specs
 
 # ============================================
 # 3. SYSTEM INFO PANEL
@@ -241,7 +323,7 @@ class SystemInfoPanel(QWidget):
         title.setStyleSheet("font-weight: bold; color: #FFF; font-size: 14px; background: transparent;")
         layout.addWidget(title)
 
-        specs = self.get_system_specs()
+        specs = get_cached_specs()
 
         self.add_stat_row(layout, "CPU:", specs['cpu'])
         self.add_stat_row(layout, "GPU:", specs['gpu'])
@@ -251,13 +333,13 @@ class SystemInfoPanel(QWidget):
         layout.addWidget(self.ram_bar)
 
         layout.addSpacing(5)
-        self.add_stat_row(layout, "VRAM (Est):", "4.2 / 24 GB")
-        self.vram_bar = self.create_usage_bar(18)
+        self.add_stat_row(layout, "VRAM (Est):", "6.0 / 8.0 GB")
+        self.vram_bar = self.create_usage_bar(75)
         layout.addWidget(self.vram_bar)
 
         layout.addSpacing(5)
         self.add_stat_row(layout, "OS:", specs['os'])
-        self.add_stat_row(layout, "Version:", "v1.0.2")
+        self.add_stat_row(layout, "Version:", "v1.0.0")
 
         layout.addStretch()
 
@@ -283,34 +365,12 @@ class SystemInfoPanel(QWidget):
         bar.setValue(int(value))
         bar.setFixedHeight(6)
         bar.setTextVisible(False)
-        bar.setStyleSheet("QProgressBar { border: 1px solid #444; border-radius: 3px; background: #222; } QProgressBar::chunk { background: #00FF00; }")
+        bar.setStyleSheet("""
+            QProgressBar { border: 1px solid #444; border-radius: 3px; background: #222; } 
+            QProgressBar::chunk { background: #00FF00; }
+        """)
         return bar
 
-    def get_system_specs(self):
-        specs = { "cpu": "Unknown", "gpu": "Unknown", "ram_text": "Unknown", "ram_percent": 0, "os": f"{platform.system()} {platform.release()}" }
-        if sys.platform == "win32":
-            try:
-                cmd = "wmic cpu get name"
-                output = subprocess.check_output(cmd, shell=True).decode().strip()
-                lines = [line.strip() for line in output.split('\n') if line.strip()]
-                if len(lines) > 1: specs['cpu'] = lines[1]
-            except: specs['cpu'] = platform.processor()
-        else: specs['cpu'] = platform.processor()
-
-        try:
-            mem = psutil.virtual_memory()
-            specs['ram_text'] = f"{round(mem.used/1024**3, 1)}/{round(mem.total/1024**3, 1)} GB"
-            specs['ram_percent'] = mem.percent
-        except: pass
-
-        if sys.platform == "win32":
-            try:
-                cmd = "wmic path win32_VideoController get name"
-                output = subprocess.check_output(cmd, shell=True).decode().strip()
-                lines = [line.strip() for line in output.split('\n') if line.strip()]
-                if len(lines) > 1: specs['gpu'] = lines[1]
-            except: pass
-        return specs
 
 # ============================================
 # 4. PLACEHOLDER PANEL

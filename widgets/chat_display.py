@@ -27,16 +27,42 @@ class ChatDisplay(QScrollArea):
 
         self.verticalScrollBar().rangeChanged.connect(self.scroll_to_bottom)
 
+        # DATA STORAGE
+        self.messages = [] # [{'role': 'user', 'content': '...'}, ...]
+        
+        # THROTTLING (Optimization)
+        self.update_timer = QTimer(self)
+        self.update_timer.setInterval(50) # Update UI every 50ms max
+        self.update_timer.timeout.connect(self._process_buffered_chunk)
+        self.buffered_text = ""
+        self.is_streaming = False
+
     def scroll_to_bottom(self):
         self.verticalScrollBar().setValue(self.verticalScrollBar().maximum())
 
-    def add_message(self, text, sender="user"):
-        bubble = MessageBubble(text, sender)
+    def add_message(self, text, sender="user", display_text=None):
+        """
+        text: The actual content for the LLM.
+        display_text: What to show in the UI (optional, defaults to text).
+        """
+        self.is_streaming = False
+        self.update_timer.stop()
+        
+        # Store in History
+        role = "assistant" if sender == "ai" else "user"
+        self.messages.append({"role": role, "content": text})
+        
+        # Show in UI
+        content_to_show = display_text if display_text else text
+        bubble = MessageBubble(content_to_show, sender)
         self.layout.addWidget(bubble)
 
-    # --- NEW FUNCTION: CLEAR CHAT ---
+    def get_history(self):
+        return self.messages
+
     def clear_chat(self):
-        """Deletes all message bubbles."""
+        """Deletes all message bubbles and history."""
+        self.messages = []
         while self.layout.count():
             item = self.layout.takeAt(0)
             widget = item.widget()
@@ -52,28 +78,75 @@ class ChatDisplay(QScrollArea):
         self.layout.removeWidget(bubble_widget)
         bubble_widget.deleteLater()
 
-    def stream_ai_message(self, full_text):
+    def start_streaming_message(self):
+        """Creates a new empty bubble for the AI response."""
+        # Add placeholder to history
+        self.messages.append({"role": "assistant", "content": ""})
+        
         bubble = MessageBubble("", "ai")
         self.layout.addWidget(bubble)
-
-        self.stream_index = 0
-        self.stream_text = full_text
         self.current_bubble = bubble
+        self.stream_text = ""
+        self.buffered_text = ""
+        self.current_bubble.set_content("...") # Initial placeholder
+        
+        self.is_streaming = True
+        self.update_timer.start()
+        
+        self.verticalScrollBar().setValue(self.verticalScrollBar().maximum())
 
-        self.type_timer = QTimer()
-        self.type_timer.timeout.connect(self._type_next_char)
-        self.type_timer.start(20)
+    def update_streaming_message(self, chunk):
+        """Appends chunk to buffer, processed by timer."""
+        if not hasattr(self, 'current_bubble') or self.current_bubble is None:
+            self.start_streaming_message()
+            
+        self.buffered_text += chunk
 
-    def _type_next_char(self):
-        if self.stream_index < len(self.stream_text):
-            current_displayed = self.stream_text[:self.stream_index+1]
+    def _process_buffered_chunk(self):
+        """Called by timer to update UI."""
+        if not self.is_streaming or not self.buffered_text:
+            return
+            
+        # Only update if there is new content
+        # We append buffer to main text and clear buffer?
+        # No, update_streaming_message appends to buffer.
+        # But wait, self.stream_text needs to hold TOTAL text.
+        
+        self.stream_text += self.buffered_text
+        self.buffered_text = ""
+        
+        self.current_bubble.set_content(self.stream_text)
+        
+        # Update History
+        if self.messages:
+            self.messages[-1]['content'] = self.stream_text
+        
+        self.verticalScrollBar().setValue(self.verticalScrollBar().maximum())
 
-            # Change: Use .set_content() which now handles the text_browser internally
-            self.current_bubble.set_content(current_displayed)
+    def end_streaming_message(self):
+        """Finalizes the stream."""
+        # Process remaining buffer
+        self._process_buffered_chunk()
+        
+        self.update_timer.stop()
+        self.is_streaming = False
+        self.current_bubble = None
+        self.stream_text = ""
+        self.buffered_text = ""
 
-            self.stream_index += 1
-
-            # Force Scroll to bottom (Important for large text updates)
-            self.verticalScrollBar().setValue(self.verticalScrollBar().maximum())
-        else:
-            self.type_timer.stop()
+    def rewrite_last_message(self, new_text):
+        """Updates the content of the last message bubble."""
+        if not self.messages: return
+        
+        # Update Data
+        self.messages[-1]['content'] = new_text
+        
+        # Update UI
+        # The last item in layout is the bubble?
+        # Layout has bubbles.
+        count = self.layout.count()
+        if count > 0:
+            item = self.layout.itemAt(count - 1)
+            widget = item.widget()
+            if isinstance(widget, MessageBubble):
+                widget.set_content(new_text)

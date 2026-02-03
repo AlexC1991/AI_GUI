@@ -1,0 +1,27 @@
+{
+    "llm": {
+        "provider": "Google Gemini",
+        "api_key": "AIzaSyA08-mwe1J4iyBytzRv5TQ2Z8dpjm_tk-8",
+        "local_model_dir": "A:/Ollama/models",
+        "cache_dir": "cache"
+    },
+    "image": {
+        "checkpoint_dir": "A:/Github/AI_GUI/models/checkpoints",
+        "lora_dir": "A:/Github/AI_GUI/models/loras",
+        "output_dir": "A:/Github/AI_GUI/outputs/images",
+        "refiner_model": "None",
+        "vae_dir": "A:/Github/AI_GUI/models/vae",
+        "text_encoder_dir": "models/text_encoders"
+    },
+    "remote": {
+        "gpu_ip": "",
+        "gpu_port": "8188",
+        "gpu_auth": "",
+        "server_ip": "0.0.0.0",
+        "server_port": "7860",
+        "server_active": false,
+        "storage_provider": "Cloudflare R2",
+        "storage_url": "",
+        "storage_key": ""
+    }
+}

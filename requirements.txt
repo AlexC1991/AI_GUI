@@ -1,0 +1,13 @@
+PySide6
+google-generativeai
+pillow
+requests
+python-dotenv
+markdown
+pygments
+diffusers
+transformers
+accelerate
+safetensors
+paramiko
+scp
