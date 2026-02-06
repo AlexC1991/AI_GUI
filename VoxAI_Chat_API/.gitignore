@@ -1,0 +1,43 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+Build/
+build/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Virtual Environment
+venv/
+env/
+ENV/
+
+# VS Code / IDE
+.vscode/
+.idea/
+
+# Models (download separately)
+models/*.gguf
+*.safetensors
+*.crdownload
+
+# DLLs (llama.cpp runtime - download separately)
+*.dll
+
+# Logs & temp
+*.log
+.wrapper_version

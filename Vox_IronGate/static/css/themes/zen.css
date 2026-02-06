@@ -1,0 +1,58 @@
+/* ZEN (Nature) Theme */
+:root {
+    --bg-body: #e8e6df;
+    /* Paper/Sand */
+    --bg-sidebar: #dad8d0;
+    --bg-surface: #f4f3ef;
+    --bg-surface-hover: #ffffff;
+
+    --text-primary: #4a4a4a;
+    /* Soft Charcoal */
+    --text-secondary: #747f76;
+    /* Sage Green */
+    --text-muted: #999;
+
+    --accent: #789c68;
+    /* Olive/Sage */
+
+    --border: #d0cec6;
+    --border-light: #e0ded6;
+
+    /* Font */
+    --font-main: 'Inter', sans-serif;
+
+    --radius-md: 16px;
+    --radius-lg: 32px;
+    --radius-avatar: 50%;
+
+    /* Soft Shadows */
+    --shadow-sm: 0 2px 5px rgba(0, 0, 0, 0.05);
+    --shadow-glow: 0 5px 15px rgba(120, 156, 104, 0.2);
+
+    --bg-user-msg: #789c68;
+    --text-user-msg: #fff;
+
+    --bg-active: #fff;
+    --text-active: #789c68;
+}
+
+/* Organic feel */
+.sidebar {
+    border: none;
+    box-shadow: 2px 0 10px rgba(0, 0, 0, 0.03);
+}
+
+.message.user-msg .msg-content {
+    border-radius: 20px 20px 0 20px;
+}
+
+.top-bar {
+    border-bottom: none;
+    background: rgba(232, 230, 223, 0.8);
+}
+
+.input-box {
+    border: none;
+    box-shadow: inset 0 2px 5px rgba(0, 0, 0, 0.05);
+    background: #fff;
+}

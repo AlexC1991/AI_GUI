@@ -1,0 +1,25 @@
+/* GEMINI (Default) Theme */
+:root {
+    --bg-body: #131314;
+    --bg-sidebar: #1e1f20;
+    --bg-surface: #28292a;
+    --bg-surface-hover: #353637;
+
+    --text-primary: #e3e3e3;
+    --text-secondary: #a8a8a8;
+    --text-muted: #6e6e6e;
+
+    --accent: #4da6ff;
+    --accent-glow: rgba(77, 166, 255, 0.2);
+    /* --gradient-primary: linear-gradient(135deg, #4da6ff, #a855f7); Undefined usage, keeping clean */
+
+    --border: #444;
+    --border-light: #555;
+
+    /* Font */
+    --font-main: 'Inter', sans-serif;
+
+    /* Specific Overrides */
+    --radius-avatar: 50%;
+    --shadow-glow: 0 0 10px rgba(77, 166, 255, 0.1);
+}

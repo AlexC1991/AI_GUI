@@ -1,0 +1,117 @@
+/* Arctic - Cool blue/ice glass aesthetic */
+:root {
+    --bg-body: #060b14;
+    --bg-sidebar: rgba(8, 16, 30, 0.95);
+    --bg-surface: rgba(15, 25, 45, 0.6);
+    --bg-surface-hover: rgba(20, 35, 60, 0.6);
+    --bg-active: rgba(56, 189, 248, 0.1);
+    --bg-user-msg: rgba(56, 189, 248, 0.06);
+    --bg-input: rgba(8, 16, 30, 0.8);
+    --bg-code: rgba(56, 189, 248, 0.1);
+    --bg-pre: rgba(0, 5, 15, 0.5);
+    --text-primary: #e0eaf5;
+    --text-secondary: #7ba3c7;
+    --text-muted: #3d5a7a;
+    --text-active: #7dd3fc;
+    --text-user-msg: #e0eaf5;
+    --text-code: #7dd3fc;
+    --accent: #0ea5e9;
+    --border: rgba(56, 189, 248, 0.08);
+    --border-light: rgba(56, 189, 248, 0.15);
+    --border-active: rgba(56, 189, 248, 0.25);
+    --font-main: 'Inter', -apple-system, sans-serif;
+    --radius-md: 14px;
+    --radius-lg: 20px;
+    --radius-avatar: 10px;
+    --glass-blur: blur(16px);
+    --shadow-sm: 0 2px 8px rgba(0, 0, 0, 0.3);
+    --shadow-glow: 0 4px 16px rgba(56, 189, 248, 0.12);
+}
+
+body::before {
+    background:
+        radial-gradient(ellipse at 20% 50%, rgba(14, 165, 233, 0.06) 0%, transparent 50%),
+        radial-gradient(ellipse at 80% 20%, rgba(56, 189, 248, 0.04) 0%, transparent 50%),
+        radial-gradient(ellipse at 50% 80%, rgba(2, 132, 199, 0.04) 0%, transparent 50%) !important;
+}
+
+.aurora-brand-icon {
+    background: linear-gradient(135deg, #0ea5e9, #0369a1) !important;
+    box-shadow: 0 4px 16px rgba(14, 165, 233, 0.3) !important;
+}
+
+.aurora-brand-text {
+    background: linear-gradient(135deg, #7dd3fc, #0ea5e9) !important;
+    -webkit-background-clip: text !important;
+    background-clip: text !important;
+    -webkit-text-fill-color: transparent !important;
+}
+
+.new-chat-btn {
+    background: linear-gradient(135deg, rgba(14, 165, 233, 0.12), rgba(56, 189, 248, 0.08)) !important;
+    border-color: rgba(14, 165, 233, 0.25) !important;
+    color: #7dd3fc !important;
+}
+
+.new-chat-btn:hover {
+    background: linear-gradient(135deg, rgba(14, 165, 233, 0.2), rgba(56, 189, 248, 0.15)) !important;
+    border-color: #0ea5e9 !important;
+    box-shadow: 0 4px 16px rgba(14, 165, 233, 0.2) !important;
+}
+
+.nav-item.active {
+    background: rgba(14, 165, 233, 0.1) !important;
+    color: #7dd3fc !important;
+    border-color: rgba(14, 165, 233, 0.2) !important;
+}
+
+.action-btn.send {
+    background: linear-gradient(135deg, #0ea5e9, #0369a1) !important;
+    box-shadow: 0 4px 12px rgba(14, 165, 233, 0.3) !important;
+}
+
+.message.ai-msg .avatar {
+    background: linear-gradient(135deg, #0ea5e9, #0369a1) !important;
+    color: white !important;
+    border: none !important;
+    box-shadow: 0 2px 10px rgba(14, 165, 233, 0.25) !important;
+}
+
+.user-profile .avatar {
+    background: linear-gradient(135deg, #0ea5e9, #0369a1) !important;
+    box-shadow: 0 2px 8px rgba(14, 165, 233, 0.3) !important;
+}
+
+.input-box:focus-within {
+    border-color: rgba(14, 165, 233, 0.4) !important;
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3), 0 0 20px rgba(14, 165, 233, 0.08) !important;
+}
+
+.model-option:hover {
+    background: rgba(14, 165, 233, 0.08) !important;
+    border-color: rgba(14, 165, 233, 0.15) !important;
+}
+
+.modal h2 {
+    background: linear-gradient(135deg, #7dd3fc, #0ea5e9) !important;
+    -webkit-background-clip: text !important;
+    background-clip: text !important;
+    -webkit-text-fill-color: transparent !important;
+}
+
+.chat-history-item.active {
+    background: rgba(14, 165, 233, 0.08) !important;
+    color: #7dd3fc !important;
+}
+
+.chat-stats {
+    color: #3d5a7a !important;
+}
+
+::-webkit-scrollbar-thumb {
+    background: rgba(14, 165, 233, 0.2) !important;
+}
+
+::-webkit-scrollbar-thumb:hover {
+    background: rgba(14, 165, 233, 0.3) !important;
+}

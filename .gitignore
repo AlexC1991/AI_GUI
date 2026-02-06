@@ -22,10 +22,20 @@ temp/
 tmp/
 
 # ===========================
-# Subprojects (separate repos)
+# Subproject Runtime/Data
 # ===========================
-VoxAI_Chat_API/
-Vox_IronGate/
+VoxAI_Chat_API/models/
+VoxAI_Chat_API/__pycache__/
+Vox_IronGate/exports/
+Vox_IronGate/uploads/
+Vox_IronGate/uploads_desktop/
+Vox_IronGate/logs/
+Vox_IronGate/clients.json
+Vox_IronGate/host_config.json
+Vox_IronGate/host_identity.key
+Vox_IronGate/__pycache__/
+Vox_IronGate/lib/__pycache__/
+Vox_IronGate/vox_install_code.txt
 
 # ===========================
 # Python / Cache

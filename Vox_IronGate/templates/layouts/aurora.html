@@ -1,0 +1,684 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{ site_name }} - Aurora</title>
+    <link rel="stylesheet" href="/static/css/base.css">
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    <style>
+        /* AURORA: Modern glass design — red, gray, black */
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+
+        :root {
+            --bg-body: #0a0a0a;
+            --bg-sidebar: rgba(14, 14, 14, 0.95);
+            --bg-surface: rgba(28, 28, 28, 0.6);
+            --bg-surface-hover: rgba(40, 40, 40, 0.6);
+            --text-primary: #e8e8e8;
+            --text-secondary: #a0a0a0;
+            --text-muted: #585858;
+            --accent: #dc2626;
+            --accent-secondary: #f87171;
+            --accent-glow: rgba(220, 38, 38, 0.15);
+            --border: rgba(255, 255, 255, 0.07);
+            --border-light: rgba(255, 255, 255, 0.12);
+            --font-main: 'Inter', -apple-system, sans-serif;
+            --radius-md: 14px;
+            --radius-lg: 20px;
+            --glass-blur: blur(16px);
+        }
+
+        body {
+            font-family: var(--font-main);
+            background: var(--bg-body);
+            color: var(--text-primary);
+            -webkit-font-smoothing: antialiased;
+        }
+
+        /* Subtle animated gradient background */
+        body::before {
+            content: '';
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background:
+                radial-gradient(ellipse at 20% 50%, rgba(220, 38, 38, 0.06) 0%, transparent 50%),
+                radial-gradient(ellipse at 80% 20%, rgba(248, 113, 113, 0.04) 0%, transparent 50%),
+                radial-gradient(ellipse at 50% 80%, rgba(160, 40, 40, 0.04) 0%, transparent 50%);
+            pointer-events: none;
+            z-index: 0;
+            animation: auroraShift 20s ease-in-out infinite alternate;
+        }
+
+        @keyframes auroraShift {
+            0% {
+                background:
+                    radial-gradient(ellipse at 20% 50%, rgba(220, 38, 38, 0.06) 0%, transparent 50%),
+                    radial-gradient(ellipse at 80% 20%, rgba(248, 113, 113, 0.04) 0%, transparent 50%),
+                    radial-gradient(ellipse at 50% 80%, rgba(160, 40, 40, 0.04) 0%, transparent 50%);
+            }
+            100% {
+                background:
+                    radial-gradient(ellipse at 40% 30%, rgba(248, 113, 113, 0.06) 0%, transparent 50%),
+                    radial-gradient(ellipse at 70% 70%, rgba(220, 38, 38, 0.05) 0%, transparent 50%),
+                    radial-gradient(ellipse at 20% 80%, rgba(160, 40, 40, 0.05) 0%, transparent 50%);
+            }
+        }
+
+        /* Ensure all content is above the background */
+        .sidebar, .main {
+            position: relative;
+            z-index: 1;
+        }
+
+        /* --- SIDEBAR --- */
+        .sidebar {
+            background: var(--bg-sidebar);
+            backdrop-filter: var(--glass-blur);
+            border-right: 1px solid var(--border);
+            width: 270px;
+            padding: 16px 12px;
+        }
+
+        .aurora-brand {
+            padding: 14px 14px 24px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .aurora-brand-icon {
+            width: 32px;
+            height: 32px;
+            background: linear-gradient(135deg, var(--accent), #991b1b);
+            border-radius: 10px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 15px;
+            font-weight: 700;
+            color: white;
+            box-shadow: 0 4px 16px rgba(220, 38, 38, 0.3);
+        }
+
+        .aurora-brand-text {
+            font-size: 16px;
+            font-weight: 700;
+            background: linear-gradient(135deg, #fca5a5, #dc2626);
+            -webkit-background-clip: text;
+            background-clip: text;
+            -webkit-text-fill-color: transparent;
+            letter-spacing: -0.5px;
+        }
+
+        .new-chat-btn {
+            background: linear-gradient(135deg, rgba(220, 38, 38, 0.12), rgba(248, 113, 113, 0.08));
+            border: 1px solid rgba(220, 38, 38, 0.25);
+            color: #fca5a5;
+            border-radius: 12px;
+            padding: 10px 14px;
+            font-size: 13px;
+            font-weight: 600;
+            margin: 0 4px 16px;
+            transition: all 0.3s;
+        }
+
+        .new-chat-btn:hover {
+            background: linear-gradient(135deg, rgba(220, 38, 38, 0.2), rgba(248, 113, 113, 0.15));
+            border-color: var(--accent);
+            transform: translateY(-1px);
+            box-shadow: 0 4px 16px rgba(220, 38, 38, 0.2);
+        }
+
+        .sidebar-section {
+            font-size: 10px;
+            color: var(--text-muted);
+            letter-spacing: 1.5px;
+            padding-left: 16px;
+            margin-top: 16px;
+            margin-bottom: 8px;
+        }
+
+        .nav-item {
+            padding: 9px 14px;
+            border-radius: 10px;
+            font-size: 13px;
+            font-weight: 500;
+            color: var(--text-secondary);
+            transition: all 0.2s;
+            border: 1px solid transparent;
+        }
+
+        .nav-item:hover {
+            background: rgba(255, 255, 255, 0.04);
+            color: var(--text-primary);
+        }
+
+        .nav-item.active {
+            background: rgba(220, 38, 38, 0.1);
+            color: #fca5a5;
+            border-color: rgba(220, 38, 38, 0.2);
+        }
+
+        .user-profile {
+            border-top: 1px solid var(--border);
+            padding: 14px;
+            margin-top: auto;
+        }
+
+        .user-profile .avatar {
+            width: 30px;
+            height: 30px;
+            background: linear-gradient(135deg, var(--accent), #991b1b);
+            color: white;
+            font-size: 11px;
+            font-weight: 600;
+            border-radius: 50%;
+            box-shadow: 0 2px 8px rgba(220, 38, 38, 0.3);
+        }
+
+        /* --- MAIN AREA --- */
+        .main {
+            background: transparent;
+        }
+
+        .top-bar {
+            height: 56px;
+            border-bottom: 1px solid var(--border);
+            padding: 0 24px;
+            background: rgba(10, 10, 10, 0.6);
+            backdrop-filter: var(--glass-blur);
+        }
+
+        .model-selector {
+            background: rgba(255, 255, 255, 0.05);
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            padding: 6px 14px;
+            font-size: 13px;
+            font-weight: 500;
+            color: var(--text-secondary);
+            backdrop-filter: blur(8px);
+        }
+
+        .model-selector:hover {
+            border-color: var(--border-light);
+            color: var(--text-primary);
+            background: rgba(255, 255, 255, 0.08);
+        }
+
+        /* --- CHAT --- */
+        .content-area {
+            background: transparent;
+        }
+
+        .feed-container {
+            max-width: 740px;
+            gap: 8px;
+            padding-bottom: 180px;
+        }
+
+        .message {
+            padding: 20px 16px;
+            border-radius: 16px;
+            gap: 14px;
+            transition: background 0.2s;
+        }
+
+        .message:hover {
+            background: rgba(255, 255, 255, 0.02);
+        }
+
+        .avatar {
+            width: 32px;
+            height: 32px;
+            border-radius: 10px;
+            font-size: 12px;
+            font-weight: 600;
+            border: 1px solid var(--border);
+        }
+
+        .message.ai-msg .avatar {
+            background: linear-gradient(135deg, var(--accent), #991b1b);
+            color: white;
+            border: none;
+            box-shadow: 0 2px 10px rgba(220, 38, 38, 0.25);
+        }
+
+        .message.user-msg .msg-content {
+            background: rgba(255, 255, 255, 0.08);
+            border: 1px solid rgba(255, 255, 255, 0.12);
+            color: #f0f0f0;
+            border-radius: 16px 16px 4px 16px;
+            padding: 12px 16px;
+            box-shadow: none;
+        }
+
+        .message.ai-msg .msg-content {
+            color: #e8e8e8;
+            line-height: 1.7;
+            font-size: 15px;
+        }
+
+        .message.ai-msg .msg-content p {
+            color: #e0e0e0;
+        }
+
+        .msg-content code {
+            background: rgba(220, 38, 38, 0.1);
+            color: #fca5a5;
+            padding: 2px 7px;
+            border-radius: 5px;
+            font-size: 13px;
+        }
+
+        .msg-content pre {
+            background: rgba(0, 0, 0, 0.4);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 16px;
+            margin: 16px 0;
+            backdrop-filter: blur(8px);
+        }
+
+        /* --- INPUT --- */
+        .input-container {
+            background: linear-gradient(to top, var(--bg-body) 50%, transparent);
+            padding: 0 24px 28px;
+        }
+
+        .input-box {
+            background: rgba(20, 20, 20, 0.7);
+            border: 1px solid var(--border-light);
+            border-radius: 20px;
+            padding: 14px 18px;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+            backdrop-filter: var(--glass-blur);
+            transition: all 0.3s;
+        }
+
+        .input-box:focus-within {
+            border-color: rgba(220, 38, 38, 0.4);
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3), 0 0 20px rgba(220, 38, 38, 0.08);
+        }
+
+        textarea {
+            font-size: 15px;
+            color: var(--text-primary);
+        }
+
+        textarea::placeholder {
+            color: var(--text-muted);
+        }
+
+        .action-btn.send {
+            background: linear-gradient(135deg, var(--accent), #991b1b);
+            color: white;
+            width: 34px;
+            height: 34px;
+            border-radius: 10px;
+            font-size: 16px;
+            box-shadow: 0 4px 12px rgba(220, 38, 38, 0.3);
+            transition: all 0.2s;
+        }
+
+        .action-btn.send:hover {
+            transform: translateY(-1px);
+            box-shadow: 0 6px 16px rgba(220, 38, 38, 0.4);
+        }
+
+        /* --- CHAT HISTORY --- */
+        .chat-history-list {
+            display: flex;
+            flex-direction: column;
+            gap: 2px;
+            max-height: 240px;
+            overflow-y: auto;
+            padding: 0 4px;
+        }
+
+        .chat-history-item {
+            padding: 8px 12px;
+            border-radius: 8px;
+            font-size: 12px;
+            color: var(--text-secondary);
+            cursor: pointer;
+            transition: all 0.2s;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 6px;
+        }
+
+        .chat-history-item:hover {
+            background: rgba(255, 255, 255, 0.05);
+            color: var(--text-primary);
+        }
+
+        .chat-history-item.active {
+            background: rgba(220, 38, 38, 0.08);
+            color: #fca5a5;
+        }
+
+        .chat-history-item .delete-chat {
+            display: none;
+            font-size: 10px;
+            opacity: 0.5;
+            padding: 2px 4px;
+            border-radius: 4px;
+            flex-shrink: 0;
+        }
+
+        .chat-history-item:hover .delete-chat {
+            display: block;
+        }
+
+        .chat-history-item .delete-chat:hover {
+            opacity: 1;
+            background: rgba(220, 38, 38, 0.2);
+        }
+
+        /* --- ATTACHMENT --- */
+        .action-btn.attach {
+            background: transparent;
+            color: var(--text-muted);
+            width: 34px;
+            height: 34px;
+            border-radius: 10px;
+            font-size: 18px;
+            border: none;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: all 0.2s;
+            flex-shrink: 0;
+        }
+
+        .action-btn.attach:hover,
+        .action-btn.search-toggle:hover {
+            color: var(--text-primary);
+            background: rgba(255, 255, 255, 0.06);
+        }
+
+        .action-btn.search-toggle {
+            background: transparent;
+            color: var(--text-muted);
+            width: 34px;
+            height: 34px;
+            border-radius: 10px;
+            font-size: 16px;
+            border: none;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: all 0.2s;
+            flex-shrink: 0;
+        }
+
+        .action-btn.search-toggle.active {
+            color: var(--accent, #dc2626);
+            background: rgba(220, 38, 38, 0.1);
+        }
+
+        .attach-preview {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+            padding: 8px 4px 0;
+        }
+
+        .attach-chip {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            background: rgba(255, 255, 255, 0.06);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 4px 10px;
+            font-size: 12px;
+            color: var(--text-secondary);
+        }
+
+        .attach-chip img {
+            width: 28px;
+            height: 28px;
+            border-radius: 4px;
+            object-fit: cover;
+        }
+
+        .attach-chip .remove-attach {
+            cursor: pointer;
+            opacity: 0.5;
+            font-size: 10px;
+            padding: 2px 4px;
+            border-radius: 4px;
+        }
+
+        .attach-chip .remove-attach:hover {
+            opacity: 1;
+            background: rgba(220, 38, 38, 0.2);
+        }
+
+        /* --- STATS BAR --- */
+        .chat-stats {
+            display: none;
+            text-align: center;
+            font-size: 11px;
+            color: var(--text-muted);
+            padding: 6px 0 0;
+            letter-spacing: 0.3px;
+            font-variant-numeric: tabular-nums;
+        }
+
+        /* --- MODALS --- */
+        .modal-overlay {
+            backdrop-filter: blur(8px);
+        }
+
+        .modal {
+            background: rgba(14, 14, 14, 0.95);
+            backdrop-filter: var(--glass-blur);
+            border: 1px solid var(--border-light);
+            border-radius: 20px;
+        }
+
+        .modal h2 {
+            font-size: 17px;
+            font-weight: 600;
+            background: linear-gradient(135deg, #fca5a5, #dc2626);
+            -webkit-background-clip: text;
+            background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+
+        .model-option {
+            background: rgba(255, 255, 255, 0.04);
+            border-radius: 10px;
+            font-size: 13px;
+            padding: 11px 14px;
+            border: 1px solid transparent;
+        }
+
+        .model-option:hover {
+            background: rgba(220, 38, 38, 0.08);
+            border-color: rgba(220, 38, 38, 0.15);
+        }
+
+        /* --- SETTINGS --- */
+        .settings-panel {
+            background: rgba(20, 20, 20, 0.8);
+            border: 1px solid var(--border);
+            border-radius: 16px;
+            backdrop-filter: var(--glass-blur);
+        }
+
+        .setting-item input,
+        .setting-item select {
+            background: rgba(0, 0, 0, 0.5);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            color: var(--text-primary);
+        }
+
+        .setting-item select option {
+            background: #1a1a1a;
+            color: var(--text-primary);
+        }
+
+        .setting-item input:focus,
+        .setting-item select:focus {
+            border-color: var(--accent);
+        }
+
+        /* --- IMAGE CARDS --- */
+        .image-card {
+            border-radius: 14px;
+            border: 1px solid var(--border);
+            overflow: hidden;
+            backdrop-filter: blur(8px);
+        }
+
+        .image-meta {
+            background: rgba(20, 20, 20, 0.6);
+            border-top: 1px solid var(--border);
+        }
+
+        .download-link {
+            color: var(--accent-secondary);
+        }
+
+        /* --- SCROLLBAR --- */
+        ::-webkit-scrollbar {
+            width: 5px;
+        }
+
+        ::-webkit-scrollbar-thumb {
+            background: rgba(220, 38, 38, 0.2);
+            border-radius: 3px;
+        }
+
+        ::-webkit-scrollbar-thumb:hover {
+            background: rgba(220, 38, 38, 0.3);
+        }
+    </style>
+</head>
+
+<body>
+    <div class="sidebar">
+        <div class="aurora-brand">
+            <div class="aurora-brand-icon">V</div>
+            <div class="aurora-brand-text">VoxAI</div>
+        </div>
+
+        <div class="new-chat-btn" id="new-chat-btn">✦ New Chat</div>
+
+        <div class="sidebar-section">MODES</div>
+        <div class="nav-item active" id="nav-chat">💬 Chat</div>
+        {% if image_gen_enabled %}
+        <div class="nav-item" id="nav-image">🎨 Image Generation</div>
+        {% endif %}
+
+        <div class="sidebar-section">HISTORY</div>
+        <div class="chat-history-list" id="chat-history-list"></div>
+
+        <div class="spacer"></div>
+        <div class="user-profile">
+            <div class="avatar">{{ client_name[:2] }}</div>
+            <div>{{ client_name }}</div>
+        </div>
+    </div>
+
+    <div class="main">
+        <div class="top-bar">
+            <div class="model-selector" id="model-selector">
+                <span id="current-model-name">Loading...</span>
+                <span style="font-size:10px; opacity:0.4;">▼</span>
+            </div>
+            <div style="display:flex; gap:8px; align-items:center;">
+                <div class="action-btn" id="settings-btn" title="Settings"
+                    style="border:1px solid var(--border); border-radius:10px;">⚙️</div>
+            </div>
+        </div>
+
+        <div class="content-area" id="scroll-area">
+            <div class="feed-container" id="chat-feed">
+            </div>
+        </div>
+
+        <div class="input-container">
+            <div class="input-wrapper">
+                <div class="settings-panel" id="gen-settings">
+                    <div class="settings-grid">
+                        <div class="setting-item">
+                            <label>Theme</label>
+                            <select id="theme-select">
+                                <option value="ember">Ember</option>
+                                <option value="arctic">Arctic</option>
+                                <option value="violet">Violet</option>
+                                <option value="jade">Jade</option>
+                                <option value="sunset">Sunset</option>
+                            </select>
+                        </div>
+                        <div class="setting-item">
+                            <label>Resolution</label>
+                            <select id="img-preset">
+                                <option value="512x512">512x512 (SD1.5)</option>
+                                <option value="512x768">512x768</option>
+                                <option value="768x512">768x512</option>
+                                <option value="768x768">768x768</option>
+                                <option value="768x1024">768x1024</option>
+                                <option value="1024x768">1024x768</option>
+                                <option value="1024x1024" selected>1024x1024 (SDXL)</option>
+                                <option value="1152x896">1152x896</option>
+                                <option value="896x1152">896x1152</option>
+                                <option value="1344x768">1344x768 (16:9)</option>
+                                <option value="768x1344">768x1344 (9:16)</option>
+                            </select>
+                        </div>
+                        <div class="setting-item"><label>Steps</label><input type="number" id="img-steps" value="20"
+                                max="50"></div>
+                        <div class="setting-item"><label>CFG</label><input type="number" id="img-cfg" value="7.0"
+                                step="0.5"></div>
+                    </div>
+                    <div class="setting-item" style="margin-top:10px;">
+                        <label>Negative Prompt</label><input type="text" id="img-neg" value="blurry, bad quality, distorted, ugly, deformed, bad anatomy, watermark">
+                    </div>
+                </div>
+                <div class="input-box">
+                    <input type="file" id="file-input" accept="image/*,.txt,.py,.js,.json,.csv,.md,.html,.css,.xml,.yaml,.yml,.log" multiple style="display:none;">
+                    <button class="action-btn attach" id="attach-btn" title="Attach file">📎</button>
+                    <button class="action-btn search-toggle" id="search-toggle" title="Toggle web search (prefix with 'search' or click here)">🔍</button>
+                    <textarea id="user-input" placeholder="Ask me anything..." rows="1"></textarea>
+                    <button class="action-btn send" id="send-btn">↑</button>
+                </div>
+                <div id="attach-preview" class="attach-preview" style="display:none;"></div>
+                <div id="chat-stats" class="chat-stats"></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- MODEL MODAL -->
+    <div class="modal-overlay" id="model-modal" onclick="if(event.target===this) closeModelModal()">
+        <div class="modal">
+            <h2 id="model-modal-title">Select Model</h2>
+            <div class="model-list" id="model-list-container"></div>
+            <div style="margin-top:16px; text-align:right;">
+                <button onclick="closeModelModal()"
+                    style="background:rgba(255,255,255,0.05); border:1px solid var(--border); color:var(--text-secondary); padding:8px 16px; border-radius:10px; cursor:pointer; font-size:13px;">Close</button>
+            </div>
+        </div>
+    </div>
+
+    <script src="/static/js/vox_app.js"></script>
+</body>
+
+</html>

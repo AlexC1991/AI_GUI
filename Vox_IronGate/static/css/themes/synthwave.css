@@ -1,0 +1,53 @@
+/* SYNTHWAVE Theme */
+:root {
+    --bg-body: #12001f;
+    --bg-sidebar: #1a052e;
+    --bg-surface: #240b3b;
+    --bg-surface-hover: #3b175e;
+
+    --text-primary: #f0f;
+    --text-secondary: #0ff;
+    --text-muted: #955;
+
+    --accent: #0ff;
+    /* Cyan */
+    --bg-active: #409;
+    --text-active: #fff;
+
+    --border: #f0f;
+    /* Pink borders */
+    --border-light: #b0f;
+
+    /* Font */
+    --font-main: 'Orbitron', sans-serif;
+
+    /* Glows */
+    --shadow-glow: 0 0 15px #f0f, inset 0 0 5px #0ff;
+    --shadow-sm: 0 0 5px #0ff;
+
+    --bg-user-msg: #306;
+    --text-user-msg: #fff;
+
+    --radius-md: 4px;
+    --radius-lg: 8px;
+    --radius-avatar: 4px;
+}
+
+/* Synth specific overrides */
+.sidebar {
+    border-right: 2px solid #0ff;
+    box-shadow: 5px 0 15px rgba(0, 255, 255, 0.1);
+}
+
+.top-bar {
+    border-bottom: 2px solid #f0f;
+}
+
+.input-box {
+    border: 2px solid #0ff;
+    box-shadow: 0 0 10px #0ff;
+}
+
+.message .avatar {
+    border: 1px solid #f0f;
+}

@@ -1,0 +1,148 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{ site_name }} - AI Workspace</title>
+
+    <!-- Base Styles -->
+    <link rel="stylesheet" href="/static/css/base.css">
+
+    <!-- Theme Engine (Default: Gemini) -->
+    <link rel="stylesheet" href="/static/css/themes/gemini.css" id="theme-stylesheet">
+
+    <!-- External Libs -->
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+</head>
+
+<body>
+
+    <!-- SIDEBAR -->
+    <div class="sidebar">
+        <div class="new-chat-btn" id="new-chat-btn">
+            <span>+</span> New Chat
+        </div>
+
+        <div class="sidebar-section">MODES</div>
+
+        <div class="nav-item active" id="nav-chat">
+            💬 Text Chat
+        </div>
+
+        {% if image_gen_enabled %}
+        <div class="nav-item" id="nav-image">
+            🎨 Image Gen
+        </div>
+        {% endif %}
+
+        <div class="spacer"></div>
+        <div class="user-profile">
+            <div class="avatar" style="background:#333; font-size:10px;">{{ client_name[:2] }}</div>
+            <div>{{ client_name }}</div>
+        </div>
+    </div>
+
+    <!-- MAIN -->
+    <div class="main">
+        <!-- TOP BAR -->
+        <div class="top-bar">
+            <div class="model-selector" id="model-selector">
+                <span id="current-model-name">Loading Model...</span>
+                <span style="font-size:10px;">▼</span>
+            </div>
+
+            <div class="action-btn" id="settings-btn" title="Settings">
+                ⚙️
+            </div>
+        </div>
+
+        <!-- CONTENT -->
+        <div class="content-area" id="scroll-area">
+            <div class="feed-container" id="chat-feed">
+                <!-- Messages go here -->
+                <div class="message ai-msg">
+                    <div class="avatar">AI</div>
+                    <div class="msg-content">
+                        <p>Hello! I'm ready to help. Select a mode from the sidebar.</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- INPUT -->
+        <div class="input-container">
+            <div class="input-wrapper">
+
+                <!-- Expanded Settings Panel -->
+                <div class="settings-panel" id="gen-settings">
+                    <div class="settings-grid">
+                        <!-- Appearance -->
+                        <div class="setting-item">
+                            <label>Theme</label>
+                            <select id="theme-select">
+                                <option value="gemini">Gemini (Default)</option>
+                                <option value="synthwave">Synthwave (Neon)</option>
+                                <option value="cyberpunk">Cyberpunk (High Contrast)</option>
+                                <option value="zen">Zen (Nature)</option>
+                                <option value="midnight">Midnight (Oceanic)</option>
+                            </select>
+                        </div>
+                        <div class="setting-item">
+                            <!-- Empty slot or other global setting -->
+                        </div>
+
+                        <!-- Image Gen Config -->
+                        <div class="setting-item">
+                            <label>Width</label>
+                            <input type="number" id="img-width" value="1024" step="64">
+                        </div>
+                        <div class="setting-item">
+                            <label>Height</label>
+                            <input type="number" id="img-height" value="1024" step="64">
+                        </div>
+                        <div class="setting-item">
+                            <label>CFG Scale</label>
+                            <input type="number" id="img-cfg" value="7.0" step="0.5">
+                        </div>
+                        <div class="setting-item">
+                            <label>Steps</label>
+                            <input type="number" id="img-steps" value="20" max="50">
+                        </div>
+                    </div>
+                    <div class="setting-item" style="margin-top:10px;">
+                        <label>Negative Prompt</label>
+                        <input type="text" id="img-neg" placeholder="Blurry, low quality, ugly...">
+                    </div>
+                </div>
+
+                <div class="input-box">
+                    <textarea id="user-input" placeholder="Message VoxAI..." rows="1"></textarea>
+                    <button class="action-btn send" id="send-btn">➤</button>
+                </div>
+                <div style="text-align:center; font-size:11px; opacity:0.5; margin-top:8px;">
+                    IronGate Secure Tunnel v10.3
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- MODEL MODAL -->
+    <div class="modal-overlay" id="modal-overlay">
+        <div class="modal">
+            <h2>Select Model</h2>
+            <div class="model-list" id="model-list-container">
+                <!-- Injected via JS -->
+                <div style="padding:20px; text-align:center; opacity:0.6;">Loading...</div>
+            </div>
+            <div style="margin-top:20px; text-align:right;">
+                <button onclick="closeModelModal()" class="new-chat-btn" style="display:inline-flex;">Close</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- App Logic -->
+    <script src="/static/js/vox_app.js"></script>
+</body>
+
+</html>

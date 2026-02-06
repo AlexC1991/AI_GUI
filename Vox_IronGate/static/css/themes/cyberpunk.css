@@ -1,0 +1,62 @@
+/* CYBERPUNK Theme */
+:root {
+    --bg-body: #050505;
+    --bg-sidebar: #000;
+    --bg-surface: #111;
+    --bg-surface-hover: #222;
+
+    --text-primary: #fcee0a;
+    /* Cyber Yellow */
+    --text-secondary: #00d9ff;
+    /* Cyber Blue */
+    --text-muted: #555;
+
+    --accent: #fcee0a;
+    --bg-active: #fcee0a;
+    --text-active: #000;
+
+    --border: #fcee0a;
+    --border-light: #444;
+
+    /* Font */
+    --font-main: 'Rajdhani', sans-serif;
+
+    /* Hard Edges */
+    --radius-md: 0px;
+    --radius-lg: 0px;
+    --radius-full: 0px;
+    --radius-avatar: 0px;
+
+    --bg-user-msg: #222;
+    --text-user-msg: #fcee0a;
+}
+
+/* Glitch/Raw feel */
+.input-box {
+    border: 2px solid var(--accent);
+    background: #000;
+}
+
+.sidebar {
+    border-right: 1px dashed var(--accent);
+}
+
+.message.user-msg .msg-content {
+    border: 1px solid var(--text-secondary);
+    background: #000;
+}
+
+.top-bar {
+    background: #111;
+    border-bottom: 2px solid var(--text-secondary);
+}
+
+button.send {
+    background: var(--text-secondary);
+    color: #000;
+    border-radius: 0;
+}
+
+.new-chat-btn {
+    border: 1px solid var(--accent);
+}

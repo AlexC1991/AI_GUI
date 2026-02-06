@@ -1,0 +1,45 @@
+# Generated files - don't commit these
+host_identity.key
+host_config.json
+clients.json
+*.lock
+
+# Exports folder (contains generated client exes)
+exports/
+
+# Uploads (user uploaded files)
+uploads/
+uploads_desktop/
+
+# Models
+models/
+*.gguf
+*.safetensors
+
+# Output images
+outputs/
+
+# Build artifacts
+build/
+dist/
+*.spec
+__pycache__/
+*.pyc
+*.py[cod]
+
+# Logs
+logs/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Virtual environment
+venv/
+.venv/
+.env
