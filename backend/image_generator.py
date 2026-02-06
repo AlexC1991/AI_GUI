@@ -26,21 +26,219 @@ from typing import Optional, Callable, Dict, Any, List, Union
 from datetime import datetime
 from enum import Enum
 
-# Redirect temp/cache BEFORE importing torch
-_app_dir = Path(__file__).parent.parent
-_temp_dir = _app_dir / "temp_workspace"
-_cache_dir = _app_dir / "models" / "hf_cache"
-_temp_dir.mkdir(exist_ok=True)
-_cache_dir.mkdir(parents=True, exist_ok=True)
 
-os.environ["TMPDIR"] = str(_temp_dir)
-os.environ["TEMP"] = str(_temp_dir)
-os.environ["TMP"] = str(_temp_dir)
-os.environ["HF_HOME"] = str(_cache_dir)
-os.environ["TRANSFORMERS_CACHE"] = str(_cache_dir)
-os.environ["HF_DATASETS_CACHE"] = str(_cache_dir)
+# ============================================
+# TEMP/CACHE DIRECTORY CONFIGURATION
+# ============================================
+# 
+# IMPORTANT: Windows ignores environment variables for temp directories!
+# Python's tempfile module and many libraries hardcode C:\Users\...\AppData\Local\Temp
+# 
+# This section MUST run before importing torch/diffusers/transformers.
+# We monkey-patch Python's tempfile module to force our preferred location.
+#
+# Why A: drive? On systems with limited C: drive space (SSDs), we need to
+# redirect all temp files and model caches to a drive with more space.
+# Change TEMP_DRIVE below to match your system.
+# ============================================
 
-# Check for torch
+def _setup_temp_directories():
+    """
+    Configure temp/cache directories BEFORE importing heavy libraries.
+    
+    This function:
+    1. Detects available drives and space
+    2. Sets environment variables (for libraries that respect them)
+    3. Monkey-patches tempfile module (for libraries that don't)
+    4. Creates necessary directories
+    
+    Returns the base temp directory path.
+    """
+    
+    # --- CONFIGURATION ---
+    # Preferred drive for temp/cache (change this for your system)
+    # Set to None to auto-detect, or specify like "A:", "D:", etc.
+    PREFERRED_TEMP_DRIVE = "A:"
+    
+    # Minimum free space required (MB) - will skip drives with less
+    # Set low (250MB) because Windows is stubborn and ignores drives 
+    # it thinks are "too full" even when we tell it not to use C:
+    MIN_FREE_SPACE_MB = 500
+    
+    # C: drive "pretend" size - tell the system C: only has this much space
+    # Forces libraries to look elsewhere. Set to 250 or lower to be safe.
+    C_DRIVE_FAKE_FREE_MB = 250
+    
+    # Subdirectory names
+    TEMP_SUBDIR = "AI_Temp"
+    CACHE_SUBDIR = "AI_Cache"
+    
+    # --- AUTO-DETECTION ---
+    def get_drive_free_space(drive: str, fake_c_drive: bool = True) -> float:
+        """
+        Get free space on a drive in MB.
+        
+        If fake_c_drive is True and drive is C:, returns the fake size
+        to discourage libraries from using it.
+        """
+        try:
+            # For C: drive, lie about available space to force other drives
+            if fake_c_drive and drive.upper().startswith("C"):
+                return C_DRIVE_FAKE_FREE_MB
+            
+            import shutil
+            total, used, free = shutil.disk_usage(drive)
+            return free / (1024 ** 2)  # Convert to MB
+        except:
+            return 0
+    
+    def find_best_drive() -> str:
+        """Find the best drive for temp files."""
+        # If preferred drive is set and has space, use it
+        if PREFERRED_TEMP_DRIVE:
+            free = get_drive_free_space(PREFERRED_TEMP_DRIVE, fake_c_drive=False)
+            if free >= MIN_FREE_SPACE_MB:
+                return PREFERRED_TEMP_DRIVE
+            else:
+                print(f"[TempConfig] Warning: {PREFERRED_TEMP_DRIVE} has only {free:.0f}MB free")
+        
+        # Otherwise, find drive with most space (excluding C:)
+        best_drive = None
+        best_space = 0
+        
+        for letter in "DEFGHIJKLMNOPQRSTUVWXYZAB":  # A and B last (often floppy)
+            drive = f"{letter}:"
+            if drive.upper() == "C:":
+                continue  # Skip C: drive entirely
+            
+            free = get_drive_free_space(drive, fake_c_drive=False)
+            if free > best_space:
+                best_space = free
+                best_drive = drive
+        
+        if best_drive and best_space >= MIN_FREE_SPACE_MB:
+            return best_drive
+        
+        # Fallback to app directory if no suitable drive found
+        app_dir = Path(__file__).parent.parent
+        print(f"[TempConfig] No suitable drive found, using app directory: {app_dir}")
+        return str(app_dir)
+    
+    # --- SETUP ---
+    base_drive = find_best_drive()
+    
+    # Handle both "X:" style and path style
+    if len(base_drive) == 2 and base_drive[1] == ":":
+        temp_base = Path(f"{base_drive}/{TEMP_SUBDIR}")
+        cache_base = Path(f"{base_drive}/{CACHE_SUBDIR}")
+    else:
+        temp_base = Path(base_drive) / TEMP_SUBDIR
+        cache_base = Path(base_drive) / CACHE_SUBDIR
+    
+    # Create subdirectories
+    dirs = {
+        "temp_general": temp_base / "general",
+        "temp_imagegen": temp_base / "image_gen", 
+        "cache_hf": cache_base / "huggingface",
+        "cache_torch": cache_base / "torch",
+    }
+    
+    for name, path in dirs.items():
+        path.mkdir(parents=True, exist_ok=True)
+    
+    # --- ENVIRONMENT VARIABLES ---
+    # Set these for libraries that actually read them
+    
+    # Windows temp
+    os.environ["TEMP"] = str(dirs["temp_general"])
+    os.environ["TMP"] = str(dirs["temp_general"])
+    os.environ["TMPDIR"] = str(dirs["temp_general"])
+    
+    # HuggingFace
+    os.environ["HF_HOME"] = str(dirs["cache_hf"])
+    os.environ["HF_DATASETS_CACHE"] = str(dirs["cache_hf"] / "datasets")
+    os.environ["HUGGINGFACE_HUB_CACHE"] = str(dirs["cache_hf"] / "hub")
+    os.environ["TRANSFORMERS_CACHE"] = str(dirs["cache_hf"] / "transformers")
+    os.environ["DIFFUSERS_CACHE"] = str(dirs["cache_hf"] / "diffusers")
+    
+    # Torch
+    os.environ["TORCH_HOME"] = str(dirs["cache_torch"])
+    os.environ["TORCH_EXTENSIONS_DIR"] = str(dirs["cache_torch"] / "extensions")
+    
+    # XDG (some libs check these even on Windows)
+    os.environ["XDG_CACHE_HOME"] = str(cache_base)
+    
+    # Disable telemetry/symlinks that cause issues
+    os.environ["HF_HUB_DISABLE_TELEMETRY"] = "1"
+    os.environ["HF_HUB_DISABLE_SYMLINKS_WARNING"] = "1"
+    
+    # PyTorch CUDA memory management
+    os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
+    
+    # --- MONKEY-PATCH TEMPFILE ---
+    # This is the critical part - Python's tempfile ignores env vars!
+    
+    tempfile.tempdir = str(dirs["temp_general"])
+    
+    _original_gettempdir = tempfile.gettempdir
+    def _forced_gettempdir():
+        return str(dirs["temp_general"])
+    tempfile.gettempdir = _forced_gettempdir
+    
+    # Also patch _get_default_tempdir if it exists
+    if hasattr(tempfile, '_get_default_tempdir'):
+        tempfile._get_default_tempdir = lambda: str(dirs["temp_general"])
+    
+    # --- MONKEY-PATCH SHUTIL.DISK_USAGE ---
+    # Some libraries call shutil.disk_usage directly to check space
+    # We lie about C: drive to make it look nearly full
+    
+    import shutil
+    _original_disk_usage = shutil.disk_usage
+    
+    def _patched_disk_usage(path):
+        """Return fake low space for C: drive to discourage its use."""
+        result = _original_disk_usage(path)
+        
+        # Check if this is C: drive
+        path_str = str(path).upper()
+        if path_str.startswith("C:") or path_str.startswith("C\\") or path_str == "C":
+            # Return a namedtuple-like with fake low free space
+            # total and used stay real, but free becomes tiny
+            fake_free = C_DRIVE_FAKE_FREE_MB * 1024 * 1024  # Convert MB to bytes
+            
+            # Create a new namedtuple with fake free space
+            from collections import namedtuple
+            DiskUsage = namedtuple('usage', ['total', 'used', 'free'])
+            return DiskUsage(result.total, result.total - fake_free, fake_free)
+        
+        return result
+    
+    shutil.disk_usage = _patched_disk_usage
+    
+    # --- REPORT ---
+    free_space = get_drive_free_space(base_drive, fake_c_drive=False)
+    print(f"[TempConfig] Using {base_drive} for temp/cache ({free_space:.0f}MB free)")
+    print(f"[TempConfig] Temp: {temp_base}")
+    print(f"[TempConfig] Cache: {cache_base}")
+    print(f"[TempConfig] C: drive reported as {C_DRIVE_FAKE_FREE_MB}MB to discourage use")
+    
+    return {
+        "base_drive": base_drive,
+        "temp_base": temp_base,
+        "cache_base": cache_base,
+        "dirs": dirs
+    }
+
+
+# Run temp setup IMMEDIATELY (before any other imports)
+_temp_config = _setup_temp_directories()
+
+
+# ============================================
+# NOW SAFE TO IMPORT HEAVY LIBRARIES
+# ============================================
+
 TORCH_AVAILABLE = False
 try:
     import torch
@@ -48,18 +246,15 @@ try:
 except ImportError:
     print("[ImageGen] PyTorch not available")
 
-# Check for PIL
 try:
     from PIL import Image
     from PIL.PngImagePlugin import PngInfo
 except ImportError:
     print("[ImageGen] PIL not available")
 
-# Import debug system
 try:
     from backend.debug import debug, enable_debug, DebugLevel
     DEBUG_AVAILABLE = True
-    # Enable debug by default at INFO level
     enable_debug(DebugLevel.VERBOSE)
 except ImportError:
     DEBUG_AVAILABLE = False
@@ -86,22 +281,18 @@ def detect_model_family(model_name: str) -> ModelFamily:
     """Detect model family from filename."""
     name_lower = model_name.lower()
     
-    # Flux detection (must be first - includes GGUF)
     if 'flux' in name_lower:
         return ModelFamily.FLUX
     
-    # SDXL detection - includes Pony which are SDXL-based
     if any(x in name_lower for x in ['pony', 'illustrious', 'animagine']):
         return ModelFamily.PONY
     
     if any(x in name_lower for x in ['sdxl', 'xl_', '_xl']):
         return ModelFamily.SDXL
     
-    # SD 2.x detection
     if any(x in name_lower for x in ['sd2', 'v2-', '768-v', '2.0', '2.1']):
         return ModelFamily.SD20
     
-    # Default to SD 1.5
     return ModelFamily.SD15
 
 
@@ -121,7 +312,6 @@ class GenerationConfig:
     seed: int = -1
     sampler: str = "euler"
     
-    # Optional customization
     vae_name: Optional[str] = None
     loras: List[Dict[str, Any]] = field(default_factory=list)
     text_encoders: List[str] = field(default_factory=list)
@@ -134,14 +324,6 @@ class GenerationConfig:
 class ImageGenerator:
     """
     Manager/Orchestrator for image generation.
-    
-    Responsibilities:
-    - Detect hardware capabilities
-    - Route to appropriate pipeline based on model family
-    - Manage memory (VRAM/RAM)
-    - Handle output (saving, metadata)
-    
-    Does NOT directly load models or run inference.
     """
     
     def __init__(self,
@@ -157,7 +339,6 @@ class ImageGenerator:
         self.text_encoder_dir = Path(text_encoder_dir)
         self.output_dir = Path(output_dir)
         
-        # Ensure directories exist
         for d in [self.checkpoint_dir, self.lora_dir, self.vae_dir, 
                   self.text_encoder_dir, self.output_dir]:
             d.mkdir(parents=True, exist_ok=True)
@@ -168,17 +349,16 @@ class ImageGenerator:
         self.vram_gb = 0
         self.gpu_name = "CPU"
         
-        # Active pipeline
+        # Pipeline state
         self.pipeline = None
         self.current_family: Optional[ModelFamily] = None
         self.current_model: Optional[str] = None
         
-        # Detect hardware
+        # Memory management
+        self._gen_count = 0
+        self._deep_cleanup_interval = 3
+        
         self._detect_hardware()
-    
-    # ============================================
-    # HARDWARE DETECTION
-    # ============================================
     
     def _detect_hardware(self):
         """Detect GPU and available VRAM."""
@@ -197,16 +377,10 @@ class ImageGenerator:
             debug.info(f"GPU: {self.gpu_name}")
             debug.info(f"VRAM: {self.vram_gb:.1f} GB")
             
-            # Check for ZLUDA
             if "ZLUDA" in self.gpu_name:
                 debug.warn("ZLUDA detected - Flash Attention will be disabled")
             
-            # Determine safe dtype
-            if self.vram_gb >= 12:
-                self.dtype = torch.float16
-            else:
-                self.dtype = torch.float16
-            
+            self.dtype = torch.float16
             debug.info(f"Default dtype: {self.dtype}")
             print(f"[Manager] GPU: {self.gpu_name} ({self.vram_gb:.1f} GB VRAM)")
         else:
@@ -229,6 +403,93 @@ class ImageGenerator:
         }
     
     # ============================================
+    # MEMORY MANAGEMENT
+    # ============================================
+    
+    def clear_vram(self, deep: bool = False):
+        """Clear VRAM between generations."""
+        if not TORCH_AVAILABLE or not torch.cuda.is_available():
+            return
+        
+        vram_before = self.get_vram_usage()
+        
+        gc.collect()
+        torch.cuda.empty_cache()
+        torch.cuda.synchronize()
+        
+        if deep:
+            debug.info("Performing deep VRAM cleanup...")
+            torch.cuda.reset_peak_memory_stats()
+            
+            for _ in range(3):
+                gc.collect()
+            
+            torch.cuda.empty_cache()
+            torch.cuda.synchronize()
+            
+            if hasattr(torch.cuda, 'ipc_collect'):
+                torch.cuda.ipc_collect()
+        
+        vram_after = self.get_vram_usage()
+        freed = vram_before['used'] - vram_after['used']
+        
+        if freed > 0.01:
+            debug.info(f"VRAM cleared: {freed:.2f} GB freed")
+            print(f"[Manager] VRAM cleared: {freed:.2f} GB freed")
+    
+    def clear_disk_temp(self):
+        """Clear temporary files from temp directory."""
+        import shutil
+        
+        temp_dir = _temp_config["dirs"]["temp_imagegen"]
+        temp_cleared = 0
+        
+        if temp_dir.exists():
+            for item in temp_dir.iterdir():
+                try:
+                    if item.is_file():
+                        size = item.stat().st_size
+                        item.unlink()
+                        temp_cleared += size
+                    elif item.is_dir():
+                        size = sum(f.stat().st_size for f in item.rglob('*') if f.is_file())
+                        shutil.rmtree(item)
+                        temp_cleared += size
+                except Exception as e:
+                    debug.warn(f"Could not delete {item}: {e}")
+        
+        if temp_cleared > 0:
+            debug.info(f"Disk temp cleared: {temp_cleared / 1024**2:.1f} MB")
+            print(f"[Manager] Disk temp cleared: {temp_cleared / 1024**2:.1f} MB")
+    
+    def pre_generation_cleanup(self):
+        """Called before each generation."""
+        self._gen_count += 1
+        do_deep = (self._gen_count % self._deep_cleanup_interval == 0)
+        
+        debug.info(f"Pre-generation cleanup (gen #{self._gen_count}, deep={do_deep})")
+        self.clear_vram(deep=do_deep)
+        
+        if do_deep:
+            self.clear_disk_temp()
+        
+        # Force deep cleanup if low on VRAM
+        vram = self.get_vram_usage()
+        if vram['free'] < 1.0:
+            debug.warn(f"Low VRAM: {vram['free']:.2f} GB free, forcing deep cleanup")
+            self.clear_vram(deep=True)
+            self.clear_disk_temp()
+    
+    def post_generation_cleanup(self):
+        """Called after each generation."""
+        debug.info("Post-generation cleanup")
+        gc.collect()
+        
+        if TORCH_AVAILABLE and torch.cuda.is_available():
+            torch.cuda.empty_cache()
+            torch.cuda.synchronize()
+    
+    # ============================================
     # MODEL SCANNING
     # ============================================
     
@@ -248,7 +509,6 @@ class ImageGenerator:
         return sorted(files, key=lambda x: x["name"])
     
     def scan_loras(self) -> List[str]:
-        """Get list of available LoRA files."""
         files = []
         if self.lora_dir.exists():
             for ext in ["*.safetensors", "*.ckpt"]:
@@ -256,7 +516,6 @@ class ImageGenerator:
         return sorted(files)
     
     def scan_vaes(self) -> List[str]:
-        """Get list of available VAE files."""
         files = []
         if self.vae_dir.exists():
             for ext in ["*.safetensors", "*.sft", "*.ckpt", "*.pt"]:
@@ -264,7 +523,6 @@ class ImageGenerator:
         return sorted(files)
     
     def scan_text_encoders(self) -> List[str]:
-        """Get list of available text encoder files."""
         files = []
         if self.text_encoder_dir.exists():
             for ext in ["*.safetensors", "*.gguf", "*.bin"]:
@@ -277,16 +535,14 @@ class ImageGenerator:
     
     def _get_pipeline_for_family(self, family: ModelFamily):
         """Get the appropriate pipeline class for a model family."""
-        # Import here to avoid circular imports
         from backend.pipelines import SD15Pipeline, SDXLPipeline, FluxPipeline
         
-        # Determine if we need CPU offload
         offload = self.vram_gb < 12
         
         if family == ModelFamily.FLUX:
             return FluxPipeline(
                 device=self.device,
-                dtype=torch.bfloat16,  # Flux prefers bfloat16
+                dtype=torch.bfloat16,
                 offload_to_cpu=offload
             )
         elif family in [ModelFamily.SDXL, ModelFamily.PONY]:
@@ -296,7 +552,7 @@ class ImageGenerator:
                 offload_to_cpu=offload,
                 is_pony=(family == ModelFamily.PONY)
             )
-        else:  # SD15, SD20
+        else:
             return SD15Pipeline(
                 device=self.device,
                 dtype=self.dtype,
@@ -309,10 +565,7 @@ class ImageGenerator:
                    text_encoder_names: Optional[List[str]] = None,
                    sampler: str = "euler",
                    progress_callback: Optional[Callable[[str], None]] = None) -> None:
-        """
-        Load a model by routing to the appropriate pipeline.
-        """
-        # Detect model family
+        """Load a model by routing to the appropriate pipeline."""
         family = detect_model_family(model_id)
         
         debug.separator("MODEL LOADING")
@@ -327,14 +580,15 @@ class ImageGenerator:
         print(f"[Manager] Family: {family.value}")
         print(f"[Manager] VRAM: {self.vram_gb:.1f} GB")
         
-        # Check if we need to switch pipelines
+        # Clear VRAM before loading new model
+        self.clear_vram(deep=True)
+        
         if self.pipeline and self.current_family != family:
             debug.model("Switching pipeline family, unloading current...")
             if progress_callback:
                 progress_callback("Unloading previous model...")
             self.unload()
         
-        # Get checkpoint path
         checkpoint_path = self.checkpoint_dir / model_id
         if not checkpoint_path.exists():
             debug.error(f"Checkpoint not found: {checkpoint_path}")
@@ -343,7 +597,6 @@ class ImageGenerator:
         debug.io(f"Checkpoint path: {checkpoint_path}")
         debug.io(f"Checkpoint size: {checkpoint_path.stat().st_size / 1024**3:.2f} GB")
         
-        # Get VAE path
         vae_path = None
         if vae_name and "Auto" not in vae_name:
             vae_path = self.vae_dir / vae_name
@@ -353,7 +606,6 @@ class ImageGenerator:
             else:
                 debug.io(f"VAE path: {vae_path}")
         
-        # Get text encoder paths
         text_encoder_paths = []
         if text_encoder_names:
             for name in text_encoder_names:
@@ -364,7 +616,6 @@ class ImageGenerator:
                 else:
                     debug.warn(f"Text encoder not found: {path}")
         
-        # Create pipeline if needed
         if self.pipeline is None or self.current_family != family:
             debug.pipeline(f"Creating new {family.value} pipeline...")
             if progress_callback:
@@ -372,7 +623,6 @@ class ImageGenerator:
             self.pipeline = self._get_pipeline_for_family(family)
             self.current_family = family
         
-        # Load model
         debug.model("Calling pipeline.load_model()...")
         self.pipeline.load_model(
             checkpoint_path=checkpoint_path,
@@ -398,11 +648,8 @@ class ImageGenerator:
         self.current_family = None
         self.current_model = None
         
-        # Force garbage collection
-        gc.collect()
-        if TORCH_AVAILABLE and torch.cuda.is_available():
-            torch.cuda.empty_cache()
-            torch.cuda.synchronize()
+        self.clear_vram(deep=True)
+        self.clear_disk_temp()
         
         print("[Manager] Model unloaded, memory cleared")
     
@@ -413,49 +660,35 @@ class ImageGenerator:
     def generate(self,
                  config: GenerationConfig,
                  progress_callback: Optional[Callable[[int, int], None]] = None) -> Image.Image:
-        """
-        Generate an image using the loaded pipeline.
-        
-        Args:
-            config: Generation configuration
-            progress_callback: Called with (current_step, total_steps)
-            
-        Returns:
-            Generated PIL Image
-        """
+        """Generate an image using the loaded pipeline."""
         if not self.pipeline or not self.pipeline.is_loaded:
             raise RuntimeError("No model loaded. Call load_model() first.")
         
         print(f"[Manager] Generating: {config.width}x{config.height}, "
               f"{config.steps} steps, CFG {config.cfg_scale}")
         
-        # Apply LoRAs if any
+        self.pre_generation_cleanup()
+        
         if config.loras:
             self.pipeline.apply_loras(config.loras, self.lora_dir)
         
-        # Generate
-        image = self.pipeline.generate(config, progress_callback)
-        
-        return image
+        try:
+            image = self.pipeline.generate(config, progress_callback)
+            return image
+        finally:
+            self.post_generation_cleanup()
     
     def generate_and_save(self,
                           config: GenerationConfig,
                           progress_callback: Optional[Callable[[int, int], None]] = None) -> str:
-        """
-        Generate an image and save it with metadata.
-        
-        Returns:
-            Path to saved image
-        """
+        """Generate an image and save it with metadata."""
         image = self.generate(config, progress_callback)
         
-        # Generate filename
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         seed = config.seed if config.seed != -1 else "random"
         filename = f"{timestamp}_{seed}.png"
         output_path = self.output_dir / filename
         
-        # Create metadata
         metadata = PngInfo()
         metadata.add_text("prompt", config.prompt)
         metadata.add_text("negative_prompt", config.negative_prompt)
@@ -468,7 +701,6 @@ class ImageGenerator:
         metadata.add_text("model", self.current_model or "unknown")
         metadata.add_text("model_family", self.current_family.value if self.current_family else "unknown")
         
-        # Save
         image.save(str(output_path), pnginfo=metadata)
         print(f"[Manager] Saved: {output_path}")
         
@@ -502,3 +734,8 @@ def reset_generator():
     if _generator_instance:
         _generator_instance.unload()
     _generator_instance = None
+
+
+def get_temp_config() -> dict:
+    """Get the current temp/cache configuration."""
+    return _temp_config

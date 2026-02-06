@@ -1,8 +1,9 @@
 from PySide6.QtWidgets import (
     QWidget, QHBoxLayout, QTextBrowser, QFrame, QVBoxLayout,
-    QLabel, QSizePolicy, QStyle
+    QLabel, QSizePolicy, QStyle, QScrollArea
 )
 from PySide6.QtCore import Qt, QTimer, QSize
+from PySide6.QtGui import QTextCursor
 import markdown
 from datetime import datetime
 
@@ -274,3 +275,168 @@ class ThinkingBubble(QWidget):
         
         # Move to next dot
         self.current_dot = (self.current_dot + 1) % 3
+
+
+# ===================================================================
+# 4. THINKING SECTION (Compact collapsible reasoning display)
+# ===================================================================
+class ThinkingSection(QWidget):
+    """Compact collapsible section that shows AI reasoning/thinking text.
+    Left-aligned and small - doesn't take up the full chat width.
+    Auto-hides after the answer is delivered."""
+
+    def __init__(self):
+        super().__init__()
+        self._expanded = False
+        self._thinking_text = ""
+        self._finalized = False
+
+        # Outer layout to push content left (like AI bubbles)
+        outer_layout = QHBoxLayout(self)
+        outer_layout.setContentsMargins(0, 2, 0, 2)
+        outer_layout.setSpacing(0)
+
+        # Inner container with fixed max width
+        self._container = QWidget()
+        self._container.setMaximumWidth(260)
+        self._container.setStyleSheet("background: transparent;")
+
+        inner_layout = QVBoxLayout(self._container)
+        inner_layout.setContentsMargins(0, 0, 0, 0)
+        inner_layout.setSpacing(0)
+
+        # --- Header (clickable) ---
+        self.header = QFrame()
+        self.header.setCursor(Qt.PointingHandCursor)
+        self.header.setFixedHeight(28)
+        self._set_header_collapsed_style()
+
+        header_inner = QHBoxLayout(self.header)
+        header_inner.setContentsMargins(10, 0, 10, 0)
+        header_inner.setSpacing(4)
+
+        self.arrow_label = QLabel("\u25B6")
+        self.arrow_label.setStyleSheet("color: #666; font-size: 8px; background: transparent; border: none;")
+        header_inner.addWidget(self.arrow_label)
+
+        self.title_label = QLabel("Thinking")
+        self.title_label.setStyleSheet(
+            "color: #888; font-size: 11px; font-style: italic; "
+            "background: transparent; border: none;"
+        )
+        header_inner.addWidget(self.title_label)
+
+        # Animated dots
+        self.dots_label = QLabel("")
+        self.dots_label.setStyleSheet("color: #555; font-size: 11px; background: transparent; border: none;")
+        header_inner.addWidget(self.dots_label)
+
+        header_inner.addStretch()
+        self.header.mousePressEvent = self._toggle
+
+        inner_layout.addWidget(self.header)
+
+        # --- Content (hidden by default) ---
+        self.content_frame = QFrame()
+        self.content_frame.setMaximumWidth(400)
+        self.content_frame.setStyleSheet("""
+            QFrame {
+                background-color: #1E1E1E;
+                border: 1px solid #333;
+                border-top: none;
+                border-radius: 0px 0px 8px 8px;
+            }
+        """)
+        self.content_frame.setVisible(False)
+
+        content_inner = QVBoxLayout(self.content_frame)
+        content_inner.setContentsMargins(10, 6, 10, 6)
+
+        self.text_display = QTextBrowser()
+        self.text_display.setReadOnly(True)
+        self.text_display.setFrameShape(QFrame.NoFrame)
+        self.text_display.setMaximumHeight(250)
+        self.text_display.setStyleSheet("""
+            QTextBrowser {
+                background: transparent;
+                color: #777;
+                font-family: 'Segoe UI', sans-serif;
+                font-size: 11px;
+                border: none;
+            }
+        """)
+        content_inner.addWidget(self.text_display)
+
+        inner_layout.addWidget(self.content_frame)
+
+        # Push left
+        outer_layout.addWidget(self._container)
+        outer_layout.addStretch()
+
+        # Dot animation timer
+        self._dot_count = 0
+        self._dot_timer = QTimer(self)
+        self._dot_timer.timeout.connect(self._animate_dots)
+        self._dot_timer.start(400)
+
+    def _set_header_collapsed_style(self):
+        self.header.setStyleSheet("""
+            QFrame {
+                background-color: #252526;
+                border: 1px solid #3a3a3a;
+                border-radius: 8px;
+            }
+            QFrame:hover { background-color: #2e2e2e; }
+        """)
+
+    def _set_header_expanded_style(self):
+        self.header.setStyleSheet("""
+            QFrame {
+                background-color: #252526;
+                border: 1px solid #3a3a3a;
+                border-radius: 8px 8px 0px 0px;
+            }
+            QFrame:hover { background-color: #2e2e2e; }
+        """)
+
+    def _animate_dots(self):
+        if self._finalized:
+            self.dots_label.setText("")
+            self._dot_timer.stop()
+            return
+        self._dot_count = (self._dot_count + 1) % 4
+        self.dots_label.setText("." * self._dot_count)
+
+    def _toggle(self, event=None):
+        self._expanded = not self._expanded
+        self.content_frame.setVisible(self._expanded)
+        self.arrow_label.setText("\u25BC" if self._expanded else "\u25B6")
+        if self._expanded:
+            self._set_header_expanded_style()
+        else:
+            self._set_header_collapsed_style()
+
+    def append_text(self, chunk):
+        """Append streaming thinking text."""
+        self._thinking_text += chunk
+        self.text_display.setPlainText(self._thinking_text)
+        cursor = self.text_display.textCursor()
+        cursor.movePosition(QTextCursor.End)
+        self.text_display.setTextCursor(cursor)
+
+    def finalize(self):
+        """Called when thinking is done. Stops animation, shrinks to summary."""
+        self._finalized = True
+        self.dots_label.setText("")
+        self._dot_timer.stop()
+
+        # Count lines for summary
+        lines = len([l for l in self._thinking_text.split('\n') if l.strip()])
+        self.title_label.setText(f"Thought for {lines} steps")
+        self.title_label.setStyleSheet(
+            "color: #666; font-size: 11px; background: transparent; border: none;"
+        )
+
+        # Collapse if expanded
+        if self._expanded:
+            self._toggle()

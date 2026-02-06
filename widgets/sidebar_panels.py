@@ -123,7 +123,7 @@ class ChatOptionsPanel(QWidget):
         layout.addWidget(QLabel("Mode:"), alignment=Qt.AlignHCenter)
         self.mode_combo = QComboBox()
         self.mode_combo.setObjectName("ModeBox")
-        self.mode_combo.addItems(["Local", "Provider"])
+        self.mode_combo.addItems(["VoxAI (Local)", "Provider"])
         self.mode_combo.currentTextChanged.connect(self._update_models)
         layout.addWidget(self.mode_combo)
 
@@ -177,29 +177,37 @@ class ChatOptionsPanel(QWidget):
         self.local_models_cache = models if models else []
         
         # Only update combo if we are currently in Local mode
-        if self.mode_combo.currentText() == "Local":
-            current = self.model_combo.currentText()
+        if "VoxAI" in self.mode_combo.currentText():
+            # current_text = self.model_combo.currentText() # Hard to restore strictly by text if formatting changes
             self.model_combo.clear()
-            if self.local_models_cache:
-                self.model_combo.addItems(self.local_models_cache)
-            else:
-                self.model_combo.addItems(["(No models found)"])
             
-            # Try to restore selection
-            if current in self.local_models_cache:
-                self.model_combo.setCurrentText(current)
-            elif not current or current == "Loading..." or current == "(No models found)":
-                # Initial blank state
-                self.model_combo.setCurrentIndex(-1)
+            if self.local_models_cache:
+                for m in self.local_models_cache:
+                    # m is {"display":str, "filename":str}
+                    if isinstance(m, dict):
+                        self.model_combo.addItem(m["display"], m["filename"])
+                    else:
+                        # Fallback for error strings
+                        self.model_combo.addItem(str(m))
+            else:
+                self.model_combo.addItem("(No models found)")
+            
+            # Default to first item if available
+            if self.model_combo.count() > 0:
+                self.model_combo.setCurrentIndex(0)
     
     def _update_models(self, mode):
         self.model_combo.clear()
-        if mode == "Local":
+        if "VoxAI" in mode:
             # Restore cached local models
             if self.local_models_cache:
-                self.model_combo.addItems(self.local_models_cache)
+                for m in self.local_models_cache:
+                    if isinstance(m, dict):
+                        self.model_combo.addItem(m["display"], m["filename"])
+                    else:
+                        self.model_combo.addItem(str(m))
             else:
-                self.model_combo.addItems(["Loading..."])
+                self.model_combo.addItem("Loading...")
         else:
             self.model_combo.addItems(["Gemini Pro", "GPT-4o", "Claude 3.5"])
 

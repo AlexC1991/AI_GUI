@@ -1,4 +1,4 @@
-from PySide6.QtWidgets import QWidget, QHBoxLayout, QTextEdit, QPushButton, QFrame, QVBoxLayout
+from PySide6.QtWidgets import QWidget, QHBoxLayout, QTextEdit, QPushButton, QFrame, QVBoxLayout, QLabel
 from PySide6.QtCore import Qt, Signal
 
 class MagicInput(QTextEdit):
@@ -71,11 +71,50 @@ class InputBar(QWidget):
             QPushButton:pressed { background-color: #1E1E1E; }
         """)
 
-        main_layout.addWidget(self.input_wrapper)
-        main_layout.addWidget(self.send_button, 0, Qt.AlignBottom)
+        # --- Speed Stats Label ---
+        self.stats_label = QLabel("")
+        self.stats_label.setAlignment(Qt.AlignCenter)
+        self.stats_label.setStyleSheet("""
+            QLabel {
+                color: #666;
+                font-size: 11px;
+                font-family: 'Segoe UI', monospace;
+                padding: 2px 0;
+            }
+        """)
+        self.stats_label.setVisible(False)
+
+        # Layout: input row + stats underneath
+        input_row = QHBoxLayout()
+        input_row.setSpacing(15)
+        input_row.setContentsMargins(0, 0, 0, 0)
+        input_row.addWidget(self.input_wrapper)
+        input_row.addWidget(self.send_button, 0, Qt.AlignBottom)
+
+        outer_layout = QVBoxLayout()
+        outer_layout.setContentsMargins(0, 0, 0, 0)
+        outer_layout.setSpacing(2)
+        outer_layout.addLayout(input_row)
+        outer_layout.addWidget(self.stats_label)
+
+        # Replace direct children with the outer layout
+        # Remove items from main_layout first
+        while main_layout.count():
+            main_layout.takeAt(0)
+        main_layout.addLayout(outer_layout)
 
         self.input.focusInEvent = self._on_focus_in
         self.input.focusOutEvent = self._on_focus_out
+
+    def show_speed(self, speed, tokens, duration):
+        """Display tokens/sec stats below the input bar."""
+        self.stats_label.setText(f"{speed:.1f} t/s  ·  {tokens} tokens  ·  {duration:.1f}s")
+        self.stats_label.setVisible(True)
+
+    def clear_speed(self):
+        """Hide the speed stats display."""
+        self.stats_label.setText("")
+        self.stats_label.setVisible(False)
 
     def adjust_height(self):
         doc_height = self.input.document().size().height()

@@ -1,29 +1,84 @@
-# Models
+# ===========================
+# AI Models & Large Files
+# ===========================
 models/
+*.gguf
+*.safetensors
+*.bin
+*.pt
+*.pth
+*.onnx
+*.ckpt
 
-# Cache
-cache/
-__pycache__/
-.cache/
-.hf_cache/
+# DLLs (llama.cpp runtime - download separately)
+*.dll
 
-# Virtual Environment
-venv/
-.venv/
-
-# Workspace and Temporary files
-temp_workspace/
+# ===========================
+# Output & Generated Files
+# ===========================
 outputs/
+temp_workspace/
 temp/
 tmp/
 
-# IDE and Project files
+# ===========================
+# Subprojects (separate repos)
+# ===========================
+VoxAI_Chat_API/
+Vox_IronGate/
+
+# ===========================
+# Python / Cache
+# ===========================
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+*.egg
+dist/
+build/
+
+# ===========================
+# Virtual Environment
+# ===========================
+venv/
+.venv/
+env/
+
+# ===========================
+# Config & Secrets
+# ===========================
+config.json
+.env
+*.key
+
+# ===========================
+# Cache
+# ===========================
+cache/
+.cache/
+.hf_cache/
+.huggingface/
+
+# ===========================
+# IDE & Editor
+# ===========================
 .idea/
 .vscode/
+*.swp
+*.swo
+*~
 
-# Environment variables
-.env
-
-# OS specific
+# ===========================
+# OS Specific
+# ===========================
 Thumbs.db
 Desktop.ini
+.DS_Store
+
+# ===========================
+# Misc
+# ===========================
+nul
+.claude/
+*.crdownload

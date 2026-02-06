@@ -195,15 +195,42 @@ class FluxPipeline(BasePipeline):
             progress_callback("Loading tokenizers...")
         
         debug.model("Loading tokenizers...")
-        tokenizer = CLIPTokenizer.from_pretrained(config_repo, subfolder="tokenizer")
-        tokenizer_2 = T5TokenizerFast.from_pretrained(config_repo, subfolder="tokenizer_2")
+        
+        # Try to load tokenizers - these are usually cached or available from non-gated sources
+        try:
+            tokenizer = CLIPTokenizer.from_pretrained(config_repo, subfolder="tokenizer")
+        except Exception as e:
+            debug.warn(f"Could not load CLIP tokenizer from {config_repo}: {e}")
+            debug.model("Trying fallback: openai/clip-vit-large-patch14")
+            tokenizer = CLIPTokenizer.from_pretrained("openai/clip-vit-large-patch14")
+        
+        try:
+            tokenizer_2 = T5TokenizerFast.from_pretrained(config_repo, subfolder="tokenizer_2")
+        except Exception as e:
+            debug.warn(f"Could not load T5 tokenizer from {config_repo}: {e}")
+            debug.model("Trying fallback: google/t5-v1_1-xxl")
+            try:
+                tokenizer_2 = T5TokenizerFast.from_pretrained("google/t5-v1_1-xxl")
+            except Exception:
+                debug.model("Trying fallback: google-t5/t5-large")
+                tokenizer_2 = T5TokenizerFast.from_pretrained("google-t5/t5-large")
         
         # ===== 5. LOAD SCHEDULER =====
         debug.scheduler("Loading FlowMatchEulerDiscreteScheduler")
-        scheduler = FlowMatchEulerDiscreteScheduler.from_pretrained(
-            config_repo,
-            subfolder="scheduler"
-        )
+        
+        try:
+            scheduler = FlowMatchEulerDiscreteScheduler.from_pretrained(
+                config_repo,
+                subfolder="scheduler"
+            )
+        except Exception as e:
+            debug.warn(f"Could not load scheduler from {config_repo}: {e}")
+            debug.scheduler("Creating default FlowMatchEulerDiscreteScheduler")
+            # Create with default config
+            scheduler = FlowMatchEulerDiscreteScheduler(
+                num_train_timesteps=1000,
+                shift=3.0,
+            )
         
         # ===== 6. ASSEMBLE PIPELINE =====
         if progress_callback:
@@ -301,74 +328,207 @@ class FluxPipeline(BasePipeline):
         print(f"[Flux] Model loaded successfully")
     
     def _load_clip(self, clip_path: Path, config_repo: str):
-        """Load CLIP text encoder from local file."""
-        from transformers import CLIPTextModel, AutoConfig
+        """Load CLIP text encoder from local file without HuggingFace access."""
+        from transformers import CLIPTextModel, CLIPTextConfig
         from safetensors.torch import load_file as load_safetensors
         
+        debug.model(f"Loading CLIP from local file: {clip_path}")
+        
         try:
-            config = AutoConfig.from_pretrained(config_repo, subfolder="text_encoder")
+            # Load the state dict from the local file
             state_dict = load_safetensors(str(clip_path))
-            model = CLIPTextModel(config)
-            model.load_state_dict(state_dict, strict=False)
-            return model.to(self.dtype)
-        except Exception as e:
-            print(f"[Flux] Custom CLIP load failed: {e}, using HF default")
-            from transformers import CLIPTextModel
-            return CLIPTextModel.from_pretrained(
-                config_repo,
-                subfolder="text_encoder",
-                torch_dtype=self.dtype,
+            debug.model(f"Loaded state dict with {len(state_dict)} keys")
+            
+            # Use standard CLIP-L config (same as Flux uses)
+            # This avoids needing to access HuggingFace for the config
+            clip_config = CLIPTextConfig(
+                vocab_size=49408,
+                hidden_size=768,
+                intermediate_size=3072,
+                num_hidden_layers=12,
+                num_attention_heads=12,
+                max_position_embeddings=77,
+                hidden_act="quick_gelu",
+                layer_norm_eps=1e-5,
+                projection_dim=768,
             )
+            
+            # Create model and load weights
+            model = CLIPTextModel(clip_config)
+            
+            # Handle potential key mismatches
+            missing, unexpected = model.load_state_dict(state_dict, strict=False)
+            if missing:
+                debug.warn(f"Missing keys in CLIP: {len(missing)}")
+            if unexpected:
+                debug.verbose(f"Unexpected keys in CLIP: {len(unexpected)}")
+            
+            debug.model("CLIP loaded successfully from local file")
+            return model.to(self.dtype)
+            
+        except Exception as e:
+            debug.error(f"Failed to load CLIP from local file: {e}")
+            
+            # Try alternative: use openai/clip-vit-large-patch14 (not gated)
+            debug.model("Trying fallback: openai/clip-vit-large-patch14")
+            try:
+                from transformers import CLIPTextModel
+                return CLIPTextModel.from_pretrained(
+                    "openai/clip-vit-large-patch14",
+                    torch_dtype=self.dtype,
+                    low_cpu_mem_usage=True,
+                )
+            except Exception as e2:
+                debug.error(f"Fallback CLIP also failed: {e2}")
+                raise RuntimeError(
+                    f"Could not load CLIP text encoder.\n"
+                    f"Local file error: {e}\n"
+                    f"Fallback error: {e2}\n"
+                    f"Please ensure clip_l.safetensors is valid or login to HuggingFace."
+                )
     
     def _load_t5(self, t5_path: Path, config_repo: str, 
                  progress_callback: Optional[Callable[[str], None]] = None):
-        """Load T5 encoder - handles both GGUF and safetensors."""
-        from transformers import T5EncoderModel, AutoConfig
+        """Load T5 encoder - handles both GGUF and safetensors without HF access."""
+        from transformers import T5EncoderModel, T5Config
         import tempfile
         
+        debug.model(f"Loading T5 from: {t5_path}")
+        debug.model(f"T5 file type: {t5_path.suffix}")
+        
         if t5_path.suffix.lower() == ".gguf":
+            debug.model("T5 GGUF detected - using disk offload...")
             print("[Flux] T5 GGUF detected - using disk offload...")
             
             temp_dir = Path(tempfile.gettempdir()) / "flux_t5_offload"
             temp_dir.mkdir(exist_ok=True)
+            debug.io(f"T5 offload directory: {temp_dir}")
             
-            t5_config = AutoConfig.from_pretrained(config_repo, subfolder="text_encoder_2")
-            
-            return T5EncoderModel.from_pretrained(
-                str(t5_path.parent),
-                gguf_file=t5_path.name,
-                config=t5_config,
-                subfolder="",
-                torch_dtype=torch.float16,
-                low_cpu_mem_usage=True,
-                device_map="auto",
-                max_memory={0: 0, "cpu": "4GB"},
-                offload_folder=str(temp_dir),
-                offload_state_dict=True,
+            # Use T5 v1.1 XXL config (standard for Flux)
+            t5_config = T5Config(
+                vocab_size=32128,
+                d_model=4096,
+                d_kv=64,
+                d_ff=10240,
+                num_layers=24,
+                num_heads=64,
+                relative_attention_num_buckets=32,
+                relative_attention_max_distance=128,
+                dropout_rate=0.1,
+                layer_norm_epsilon=1e-6,
+                feed_forward_proj="gated-gelu",
+                is_encoder_decoder=False,
+                is_decoder=False,
+                use_cache=False,
+                dense_act_fn="gelu_new",
             )
+            
+            try:
+                return T5EncoderModel.from_pretrained(
+                    str(t5_path.parent),
+                    gguf_file=t5_path.name,
+                    config=t5_config,
+                    subfolder="",
+                    torch_dtype=torch.float16,
+                    low_cpu_mem_usage=True,
+                    device_map="auto",
+                    max_memory={0: 0, "cpu": "4GB"},
+                    offload_folder=str(temp_dir),
+                    offload_state_dict=True,
+                )
+            except Exception as e:
+                debug.error(f"T5 GGUF loading failed: {e}", exc_info=True)
+                raise
         else:
+            # Standard safetensors loading
+            debug.model("Loading T5 from safetensors...")
             from safetensors.torch import load_file as load_safetensors
-            config = AutoConfig.from_pretrained(config_repo, subfolder="text_encoder_2")
-            state_dict = load_safetensors(str(t5_path))
-            model = T5EncoderModel(config)
-            model.load_state_dict(state_dict, strict=False)
-            return model.to(self.dtype)
+            
+            t5_config = T5Config(
+                vocab_size=32128,
+                d_model=4096,
+                d_kv=64,
+                d_ff=10240,
+                num_layers=24,
+                num_heads=64,
+                relative_attention_num_buckets=32,
+                relative_attention_max_distance=128,
+                dropout_rate=0.1,
+                layer_norm_epsilon=1e-6,
+                feed_forward_proj="gated-gelu",
+                is_encoder_decoder=False,
+                is_decoder=False,
+            )
+            
+            try:
+                state_dict = load_safetensors(str(t5_path))
+                model = T5EncoderModel(t5_config)
+                model.load_state_dict(state_dict, strict=False)
+                return model.to(self.dtype)
+            except Exception as e:
+                debug.error(f"T5 safetensors loading failed: {e}", exc_info=True)
+                raise
     
     def _load_transformer(self, checkpoint_path: Path, config_repo: str,
                           progress_callback: Optional[Callable[[str], None]] = None):
-        """Load Flux transformer - handles both GGUF and safetensors."""
+        """Load Flux transformer - handles both GGUF and safetensors without HF access."""
         from diffusers import FluxTransformer2DModel
+        
+        debug.model(f"Loading transformer from: {checkpoint_path}")
+        
+        is_schnell = "schnell" in checkpoint_path.name.lower()
+        
+        debug.model(f"Transformer format: {'GGUF' if self.is_gguf else 'Safetensors'}")
+        debug.model(f"Model variant: {'Schnell' if is_schnell else 'Dev'}")
+        
+        # Flux transformer config (same for both Schnell and Dev, except guidance_embeds)
+        # This is the standard Flux transformer architecture
+        transformer_config = {
+            "attention_head_dim": 128,
+            "guidance_embeds": not is_schnell,  # False for Schnell, True for Dev
+            "in_channels": 64,
+            "joint_attention_dim": 4096,
+            "num_attention_heads": 24,
+            "num_layers": 19,
+            "num_single_layers": 38,
+            "patch_size": 1,
+            "pooled_projection_dim": 768,
+        }
+        
+        debug.model(f"Using hardcoded config (guidance_embeds={not is_schnell})")
         
         if self.is_gguf:
             print(f"[Flux] Loading GGUF transformer: {checkpoint_path}")
+            debug.model("Loading GGUF transformer with quantization...")
+            
             try:
                 from diffusers import GGUFQuantizationConfig
                 
-                return FluxTransformer2DModel.from_single_file(
-                    str(checkpoint_path),
-                    quantization_config=GGUFQuantizationConfig(compute_dtype=torch.bfloat16),
-                    torch_dtype=torch.bfloat16,
-                )
+                quantization_config = GGUFQuantizationConfig(compute_dtype=torch.bfloat16)
+                
+                # Try with config parameter first
+                try:
+                    transformer = FluxTransformer2DModel.from_single_file(
+                        str(checkpoint_path),
+                        config=transformer_config,
+                        quantization_config=quantization_config,
+                        torch_dtype=torch.bfloat16,
+                        low_cpu_mem_usage=True,
+                    )
+                    debug.model("GGUF transformer loaded with config")
+                    return transformer
+                except TypeError as e:
+                    debug.warn(f"Config parameter not supported: {e}")
+                    # Fallback: try without config
+                    transformer = FluxTransformer2DModel.from_single_file(
+                        str(checkpoint_path),
+                        quantization_config=quantization_config,
+                        torch_dtype=torch.bfloat16,
+                        local_files_only=True,
+                    )
+                    debug.model("GGUF transformer loaded (no config)")
+                    return transformer
+                    
             except ImportError:
                 raise RuntimeError(
                     "GGUF support requires diffusers >= 0.31.0\n"
@@ -376,11 +536,27 @@ class FluxPipeline(BasePipeline):
                 )
         else:
             print(f"[Flux] Loading safetensors transformer: {checkpoint_path}")
-            return FluxTransformer2DModel.from_single_file(
-                str(checkpoint_path),
-                torch_dtype=self.dtype,
-                low_cpu_mem_usage=True,
-            )
+            debug.model("Loading safetensors transformer...")
+            
+            try:
+                transformer = FluxTransformer2DModel.from_single_file(
+                    str(checkpoint_path),
+                    config=transformer_config,
+                    torch_dtype=self.dtype,
+                    low_cpu_mem_usage=True,
+                )
+                debug.model("Safetensors transformer loaded with config")
+                return transformer
+            except TypeError:
+                debug.warn("Config parameter not supported, trying without...")
+                transformer = FluxTransformer2DModel.from_single_file(
+                    str(checkpoint_path),
+                    torch_dtype=self.dtype,
+                    low_cpu_mem_usage=True,
+                    local_files_only=True,
+                )
+                debug.model("Safetensors transformer loaded (no config)")
+                return transformer
     
     def _load_vae(self, vae_path: Optional[Path], config_repo: str):
         """Load Flux VAE - must be Flux-compatible (16 channels)."""
@@ -395,6 +571,7 @@ class FluxPipeline(BasePipeline):
             )
             
             if is_flux_vae:
+                debug.model(f"Loading custom Flux VAE: {vae_path}")
                 print(f"[Flux] Loading custom VAE: {vae_path}")
                 try:
                     return AutoencoderKL.from_single_file(
@@ -402,17 +579,46 @@ class FluxPipeline(BasePipeline):
                         torch_dtype=self.dtype,
                     )
                 except Exception as e:
+                    debug.error(f"Custom VAE failed: {e}")
                     print(f"[Flux] Custom VAE failed: {e}")
             else:
+                debug.warn(f"Skipping non-Flux VAE: {vae_path.name}")
                 print(f"[Flux] Skipping non-Flux VAE: {vae_path.name}")
         
+        # Try to load from HuggingFace, but handle auth errors gracefully
+        debug.model("Loading VAE from HuggingFace...")
         print("[Flux] Loading default VAE from HuggingFace...")
-        return AutoencoderKL.from_pretrained(
-            config_repo,
-            subfolder="vae",
-            torch_dtype=self.dtype,
-            low_cpu_mem_usage=True,
-        )
+        
+        try:
+            return AutoencoderKL.from_pretrained(
+                config_repo,
+                subfolder="vae",
+                torch_dtype=self.dtype,
+                low_cpu_mem_usage=True,
+            )
+        except Exception as e:
+            debug.error(f"HuggingFace VAE failed: {e}")
+            
+            # Try alternative non-gated VAE
+            debug.model("Trying fallback: stabilityai/sd-vae-ft-mse")
+            try:
+                # Note: This is SD VAE, not Flux VAE - may not work correctly
+                # but better than crashing
+                debug.warn("Using SD VAE as fallback - results may be incorrect")
+                return AutoencoderKL.from_pretrained(
+                    "stabilityai/sd-vae-ft-mse",
+                    torch_dtype=self.dtype,
+                    low_cpu_mem_usage=True,
+                )
+            except Exception as e2:
+                raise RuntimeError(
+                    f"Could not load VAE.\n"
+                    f"Please either:\n"
+                    f"1. Place a Flux VAE file (ae.safetensors) in models/vae/\n"
+                    f"2. Login to HuggingFace: huggingface-cli login\n"
+                    f"3. Accept the Flux license at: https://huggingface.co/black-forest-labs/FLUX.1-schnell\n"
+                    f"Error: {e}"
+                )
     
     def generate(self,
                  config: GenerationConfig,

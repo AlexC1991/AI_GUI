@@ -1,14 +1,174 @@
-﻿from PySide6.QtWidgets import (
+"""
+Settings View with Web Server Integration
+
+Adds controls to start/stop the web server directly from the GUI.
+"""
+
+from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QLabel, QLineEdit, QComboBox,
-    QPushButton, QScrollArea, QFrame, QFileDialog, QHBoxLayout, QGroupBox, QMessageBox, QTabWidget, QCheckBox
+    QPushButton, QScrollArea, QFrame, QFileDialog, QHBoxLayout, QGroupBox, QMessageBox, QTabWidget, QCheckBox,
+    QSpinBox
 )
-from PySide6.QtCore import Qt, QTimer
+from PySide6.QtCore import Qt, QTimer, QThread, Signal
 from widgets.model_manager_dialog import ModelManagerDialog
 from utils.config_manager import ConfigManager
+import subprocess
+import sys
+import os
+import socket
+
+
+class IronGateThread(QThread):
+    """Thread to run Vox IronGate Web Gateway (iron_host.py) on port 8000."""
+    started = Signal()
+    stopped = Signal()
+    error = Signal(str)
+    install_code_received = Signal(str)
+
+    def __init__(self):
+        super().__init__()
+        self.process = None
+        self._running = False
+
+    def run(self):
+        self._running = True
+        try:
+            root_dir = os.path.dirname(os.path.dirname(__file__))
+            script_path = os.path.join(root_dir, "Vox_IronGate", "iron_host.py")
+            code_file = os.path.join(root_dir, "Vox_IronGate", "vox_install_code.txt")
+
+            if not os.path.exists(script_path):
+                self.error.emit(f"iron_host.py not found at {script_path}")
+                return
+
+            if os.path.exists(code_file):
+                try:
+                    os.remove(code_file)
+                except:
+                    pass
+
+            creation_flags = 0x00000010 if sys.platform == "win32" else 0
+
+            self.process = subprocess.Popen(
+                [sys.executable, script_path],
+                creationflags=creation_flags,
+                cwd=os.path.dirname(script_path)
+            )
+
+            self.started.emit()
+
+            import re
+            code_pattern = re.compile(r"Install Code:\s*([A-Z0-9\-]+)")
+
+            while self._running:
+                if self.process.poll() is not None:
+                    break
+
+                if os.path.exists(code_file):
+                    try:
+                        with open(code_file, "r") as f:
+                            content = f.read().strip()
+
+                        match = code_pattern.search(content)
+                        if match:
+                            self.install_code_received.emit(match.group(1))
+                            try:
+                                os.remove(code_file)
+                            except:
+                                pass
+                    except:
+                        pass
+
+                self.msleep(500)
+
+        except Exception as e:
+            self.error.emit(str(e))
+        finally:
+            self.stopped.emit()
+
+    def stop(self):
+        self._running = False
+        if self.process:
+            self.process.terminate()
+            try:
+                self.process.wait(timeout=5)
+            except:
+                self.process.kill()
+
+
+class DesktopServiceThread(QThread):
+    """Thread to run Iron Desktop Service (iron_desktop.py) on port 8001.
+
+    This is a lightweight, localhost-only API server that provides
+    web search and file upload services to the desktop app.
+    Separate from the full IronGate web gateway.
+    """
+    started = Signal()
+    stopped = Signal()
+    error = Signal(str)
+
+    def __init__(self):
+        super().__init__()
+        self.process = None
+        self._running = False
+
+    def run(self):
+        self._running = True
+        try:
+            root_dir = os.path.dirname(os.path.dirname(__file__))
+            script_path = os.path.join(root_dir, "Vox_IronGate", "iron_desktop.py")
+
+            if not os.path.exists(script_path):
+                self.error.emit(f"iron_desktop.py not found at {script_path}")
+                return
+
+            # Run without a console window (headless service)
+            creation_flags = 0x08000000 if sys.platform == "win32" else 0  # CREATE_NO_WINDOW
+
+            self.process = subprocess.Popen(
+                [sys.executable, script_path],
+                creationflags=creation_flags,
+                cwd=os.path.dirname(script_path),
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE
+            )
+
+            self.started.emit()
+
+            while self._running:
+                if self.process.poll() is not None:
+                    # Process exited unexpectedly
+                    stderr = self.process.stderr.read().decode(errors='replace') if self.process.stderr else ""
+                    if stderr:
+                        self.error.emit(f"Desktop Service exited: {stderr[:200]}")
+                    break
+                self.msleep(500)
+
+        except Exception as e:
+            self.error.emit(str(e))
+        finally:
+            self.stopped.emit()
+
+    def stop(self):
+        self._running = False
+        if self.process:
+            self.process.terminate()
+            try:
+                self.process.wait(timeout=5)
+            except:
+                self.process.kill()
+
+    def is_alive(self):
+        """Check if the process is still running."""
+        return self.process is not None and self.process.poll() is None
+
 
 class SettingsView(QScrollArea):
     def __init__(self):
         super().__init__()
+
+        self.irongate_thread = None
+        self.desktop_service_thread = None  # Managed from here, or auto-started from MainWindow
 
         # Scroll Area Properties
         self.setWidgetResizable(True)
@@ -51,7 +211,7 @@ class SettingsView(QScrollArea):
             }
 
             /* INPUTS */
-            QLineEdit {
+            QLineEdit, QSpinBox {
                 background-color: #252526;
                 color: #E0E0E0;
                 border: 1px solid #444;
@@ -59,7 +219,7 @@ class SettingsView(QScrollArea):
                 padding: 8px;
                 font-size: 13px;
             }
-            QLineEdit:focus { border: 1px solid #008080; }
+            QLineEdit:focus, QSpinBox:focus { border: 1px solid #008080; }
             
             /* DROPDOWNS */
             QComboBox {
@@ -96,6 +256,24 @@ class SettingsView(QScrollArea):
                 margin-top: 10px;
             }
             QPushButton#ApplyBtn:hover { background-color: #008080; }
+            
+            /* START SERVER BUTTON */
+            QPushButton#StartServerBtn {
+                background-color: #2d7d2d;
+                border: 1px solid #1a5c1a;
+                font-weight: bold;
+                padding: 10px 20px;
+            }
+            QPushButton#StartServerBtn:hover { background-color: #3d9d3d; }
+            
+            /* STOP SERVER BUTTON */
+            QPushButton#StopServerBtn {
+                background-color: #8b2d2d;
+                border: 1px solid #6b1a1a;
+                font-weight: bold;
+                padding: 10px 20px;
+            }
+            QPushButton#StopServerBtn:hover { background-color: #ab3d3d; }
         """)
 
         # Main Container
@@ -111,11 +289,195 @@ class SettingsView(QScrollArea):
         self.main_layout.addWidget(title)
 
         # --- SECTIONS ---
+        self.create_irongate_section()  # NEW - Vox IronGate
         self.create_llm_section()
         self.create_image_section()
         self.create_remote_section()
 
         self.setWidget(self.container)
+
+    def create_irongate_section(self):
+        """Vox IronGate controls — Desktop Service + Web Gateway."""
+        group = QGroupBox("⚔️ Vox IronGate Services")
+        layout = QVBoxLayout(group)
+        layout.setSpacing(12)
+        layout.setContentsMargins(20, 35, 20, 20)
+
+        # --- Desktop Service (port 8001) ---
+        desktop_header = QLabel("Desktop Service (Port 8001)")
+        desktop_header.setStyleSheet("color: #00CED1; font-size: 13px; font-weight: bold; margin-top: 5px;")
+        layout.addWidget(desktop_header)
+
+        desktop_desc = QLabel("Local-only API for web search & file handling. Required for desktop AI features.")
+        desktop_desc.setStyleSheet("color: #888; font-size: 11px;")
+        layout.addWidget(desktop_desc)
+
+        desktop_btn_row = QHBoxLayout()
+
+        self.desktop_status = QLabel("● Stopped")
+        self.desktop_status.setStyleSheet("color: #888;")
+        desktop_btn_row.addWidget(self.desktop_status)
+        desktop_btn_row.addStretch()
+
+        self.start_desktop_btn = QPushButton("▶ Start")
+        self.start_desktop_btn.setCursor(Qt.PointingHandCursor)
+        self.start_desktop_btn.clicked.connect(self.start_desktop_service)
+        self.start_desktop_btn.setStyleSheet("background-color: #006666; border: 1px solid #004d4d;")
+        desktop_btn_row.addWidget(self.start_desktop_btn)
+
+        self.stop_desktop_btn = QPushButton("■ Stop")
+        self.stop_desktop_btn.setCursor(Qt.PointingHandCursor)
+        self.stop_desktop_btn.clicked.connect(self.stop_desktop_service)
+        self.stop_desktop_btn.setEnabled(False)
+        desktop_btn_row.addWidget(self.stop_desktop_btn)
+
+        layout.addLayout(desktop_btn_row)
+
+        # Check if desktop service is already running (auto-started by MainWindow)
+        self._check_desktop_status()
+
+        # Separator
+        line = QFrame()
+        line.setFrameShape(QFrame.HLine)
+        line.setStyleSheet("background-color: #333; margin: 8px 0;")
+        layout.addWidget(line)
+
+        # --- Web Gateway (port 8000 + ngrok) ---
+        web_header = QLabel("Web Gateway (Port 8000 + Tunnel)")
+        web_header.setStyleSheet("color: #BB86FC; font-size: 13px; font-weight: bold;")
+        layout.addWidget(web_header)
+
+        web_desc = QLabel("Share your AI securely with friends via encrypted tunnel. Opens admin console.")
+        web_desc.setStyleSheet("color: #888; font-size: 11px;")
+        layout.addWidget(web_desc)
+
+        # Install Code Display
+        code_layout = QHBoxLayout()
+        code_layout.addWidget(QLabel("Install Code:"))
+
+        self.gate_code = QLineEdit()
+        self.gate_code.setPlaceholderText("Waiting for code...")
+        self.gate_code.setReadOnly(True)
+        self.gate_code.setStyleSheet("font-family: Consolas; color: #00ff00; font-weight: bold; letter-spacing: 2px;")
+        code_layout.addWidget(self.gate_code)
+
+        layout.addLayout(code_layout)
+
+        # Controls
+        btn_row = QHBoxLayout()
+
+        self.gate_status = QLabel("● Stopped")
+        self.gate_status.setStyleSheet("color: #888;")
+        btn_row.addWidget(self.gate_status)
+        btn_row.addStretch()
+
+        self.start_gate_btn = QPushButton("▶ Start Tunnel")
+        self.start_gate_btn.setCursor(Qt.PointingHandCursor)
+        self.start_gate_btn.clicked.connect(self.start_irongate)
+        self.start_gate_btn.setStyleSheet("background-color: #5d2b85; border: 1px solid #3d1b55;")
+        btn_row.addWidget(self.start_gate_btn)
+
+        self.stop_gate_btn = QPushButton("■ Stop Tunnel")
+        self.stop_gate_btn.setCursor(Qt.PointingHandCursor)
+        self.stop_gate_btn.clicked.connect(self.stop_irongate)
+        self.stop_gate_btn.setEnabled(False)
+        btn_row.addWidget(self.stop_gate_btn)
+
+        layout.addLayout(btn_row)
+        self.main_layout.addWidget(group)
+
+    # --- Desktop Service Controls ---
+
+    def _check_desktop_status(self):
+        """Check if Iron Desktop Service is already running (e.g. auto-started)."""
+        try:
+            import requests
+            resp = requests.get("http://localhost:8001/health", timeout=1)
+            if resp.status_code == 200:
+                self.desktop_status.setText("● Running (localhost:8001)")
+                self.desktop_status.setStyleSheet("color: #5cb85c;")
+                self.start_desktop_btn.setEnabled(False)
+                self.stop_desktop_btn.setEnabled(False)  # Can't stop auto-started service from here
+                return
+        except Exception:
+            pass
+
+    def start_desktop_service(self):
+        self.desktop_service_thread = DesktopServiceThread()
+        self.desktop_service_thread.started.connect(self.on_desktop_started)
+        self.desktop_service_thread.stopped.connect(self.on_desktop_stopped)
+        self.desktop_service_thread.error.connect(self.on_desktop_error)
+        self.desktop_service_thread.start()
+
+        self.start_desktop_btn.setEnabled(False)
+        self.desktop_status.setText("● Starting...")
+        self.desktop_status.setStyleSheet("color: #f0ad4e;")
+
+    def stop_desktop_service(self):
+        if self.desktop_service_thread:
+            self.desktop_service_thread.stop()
+            self.desktop_service_thread.wait()
+            self.desktop_service_thread = None
+
+    def on_desktop_started(self):
+        self.desktop_status.setText("● Running (localhost:8001)")
+        self.desktop_status.setStyleSheet("color: #5cb85c;")
+        self.start_desktop_btn.setEnabled(False)
+        self.stop_desktop_btn.setEnabled(True)
+
+    def on_desktop_stopped(self):
+        self.desktop_status.setText("● Stopped")
+        self.desktop_status.setStyleSheet("color: #888;")
+        self.start_desktop_btn.setEnabled(True)
+        self.stop_desktop_btn.setEnabled(False)
+
+    def on_desktop_error(self, error):
+        self.desktop_status.setText("● Error")
+        self.desktop_status.setStyleSheet("color: #d9534f;")
+        QMessageBox.warning(self, "Desktop Service Error", str(error))
+        self.on_desktop_stopped()
+
+    # --- Web Gateway Controls ---
+
+    def start_irongate(self):
+        self.irongate_thread = IronGateThread()
+        self.irongate_thread.started.connect(self.on_gate_started)
+        self.irongate_thread.stopped.connect(self.on_gate_stopped)
+        self.irongate_thread.error.connect(self.on_gate_error)
+        self.irongate_thread.install_code_received.connect(self.on_gate_code)
+        self.irongate_thread.start()
+
+        self.start_gate_btn.setEnabled(False)
+        self.gate_status.setText("● Starting...")
+        self.gate_status.setStyleSheet("color: #f0ad4e;")
+
+    def stop_irongate(self):
+        if self.irongate_thread:
+            self.irongate_thread.stop()
+            self.irongate_thread.wait()
+            self.irongate_thread = None
+
+    def on_gate_started(self):
+        self.gate_status.setText("● Running")
+        self.gate_status.setStyleSheet("color: #5cb85c;")
+        self.start_gate_btn.setEnabled(False)
+        self.stop_gate_btn.setEnabled(True)
+
+    def on_gate_stopped(self):
+        self.gate_status.setText("● Stopped")
+        self.gate_status.setStyleSheet("color: #888;")
+        self.start_gate_btn.setEnabled(True)
+        self.stop_gate_btn.setEnabled(False)
+        self.gate_code.setText("")
+
+    def on_gate_error(self, error):
+        self.gate_status.setText("● Error")
+        self.gate_status.setStyleSheet("color: #d9534f;")
+        QMessageBox.critical(self, "IronGate Error", str(error))
+        self.on_gate_stopped()
+
+    def on_gate_code(self, code):
+        self.gate_code.setText(code)
 
     def create_llm_section(self):
         group = QGroupBox("LLM Configuration (Local & Provider)")
@@ -198,10 +560,9 @@ class SettingsView(QScrollArea):
     def create_image_section(self):
         group = QGroupBox("Image Generation Paths")
         layout = QVBoxLayout(group)
-        layout.setSpacing(15)
+        layout.setSpacing(10)
         layout.setContentsMargins(20, 35, 20, 20)
         
-        self.config = ConfigManager.load_config()
         img_cfg = self.config.get("image", {})
 
         layout.addWidget(QLabel("Output Directory:"))
@@ -224,7 +585,8 @@ class SettingsView(QScrollArea):
         lyt, self.txt_text_enc_dir = self.create_file_browser_row(img_cfg.get("text_encoder_dir", "models/text_encoders"))
         layout.addLayout(lyt)
 
-        layout.addWidget(QLabel("Prompt Refiner Model (LLM):"))
+        # Prompt Enhancement Model
+        layout.addWidget(QLabel("Prompt Enhancement Model:"))
         self.img_model_combo = QComboBox()
         self.img_model_combo.addItems(["Llama 3 (8B)", "Mistral 7B", "Gemini Pro (API)"])
         layout.addWidget(self.img_model_combo)
@@ -261,20 +623,20 @@ class SettingsView(QScrollArea):
         # 1. EXTERNAL GPU WORKER (CONNECT TO...)
         # =======================================================
         layout.addWidget(QLabel("External GPU Worker (Client Mode):"))
-        layout.addWidget(QLabel("Connect to an external RunPod or Desktop GPU.", styleSheet="color:#888; font-size:11px;"))
+        layout.addWidget(QLabel("Connect to an external RunPod or Desktop GPU."))
 
         gpu_row = QHBoxLayout()
 
         # Endpoint
         endpoint_layout = QVBoxLayout()
-        endpoint_layout.addWidget(QLabel("Endpoint URL / IP:", styleSheet="font-weight:normal; font-size:11px; color:#AAA"))
+        endpoint_layout.addWidget(QLabel("Endpoint URL / IP:"))
         self.gpu_ip_input = QLineEdit()
         self.gpu_ip_input.setPlaceholderText("wss://runpod-id... or 192.168.1.X")
         endpoint_layout.addWidget(self.gpu_ip_input)
 
         # Port
         port_layout = QVBoxLayout()
-        port_layout.addWidget(QLabel("Port:", styleSheet="font-weight:normal; font-size:11px; color:#AAA"))
+        port_layout.addWidget(QLabel("Port:"))
         self.gpu_port_input = QLineEdit()
         self.gpu_port_input.setPlaceholderText("8188")
         self.gpu_port_input.setFixedWidth(80)
@@ -305,59 +667,10 @@ class SettingsView(QScrollArea):
         layout.addWidget(line)
 
         # =======================================================
-        # 2. REMOTE ACCESS (HOST SERVER)
-        # =======================================================
-        layout.addWidget(QLabel("Remote Access (Server Mode):"))
-        layout.addWidget(QLabel("Allow other users to connect to THIS machine.", styleSheet="color:#888; font-size:11px;"))
-
-        server_row = QHBoxLayout()
-
-        # IP Bind
-        ip_bind_layout = QVBoxLayout()
-        ip_bind_layout.addWidget(QLabel("Bind IP:", styleSheet="font-weight:normal; font-size:11px; color:#AAA"))
-        self.server_ip = QLineEdit("0.0.0.0")
-        self.server_ip.setPlaceholderText("0.0.0.0 (All Interfaces)")
-        ip_bind_layout.addWidget(self.server_ip)
-
-        # Port
-        server_port_layout = QVBoxLayout()
-        server_port_layout.addWidget(QLabel("Port:", styleSheet="font-weight:normal; font-size:11px; color:#AAA"))
-        self.server_port = QLineEdit("7860")
-        self.server_port.setFixedWidth(80)
-        server_port_layout.addWidget(self.server_port)
-
-        server_row.addLayout(ip_bind_layout)
-        server_row.addLayout(server_port_layout)
-        layout.addLayout(server_row)
-
-        # Active Toggle & Test
-        server_action_row = QHBoxLayout()
-        self.server_active = QCheckBox("Enable Remote Access")
-        self.server_active.setStyleSheet("""
-            QCheckBox { color: #E0E0E0; font-size: 13px; font-weight: bold; }
-            QCheckBox::indicator { width: 18px; height: 18px; border: 1px solid #555; background: #222; border-radius: 4px; }
-            QCheckBox::indicator:checked { background: #008080; border: 1px solid #008080; }
-        """)
-        server_action_row.addWidget(self.server_active)
-
-        test_server_btn = QPushButton("Test Server Status")
-        test_server_btn.setProperty("class", "test-btn")
-        test_server_btn.clicked.connect(lambda: self.run_test("Remote Server"))
-        server_action_row.addWidget(test_server_btn)
-
-        layout.addLayout(server_action_row)
-
-        # Separator
-        line2 = QFrame()
-        line2.setFrameShape(QFrame.HLine)
-        line2.setStyleSheet("background-color: #333; margin: 15px 0;")
-        layout.addWidget(line2)
-
-        # =======================================================
-        # 3. CLOUD MEMORY CREDENTIALS
+        # 2. CLOUD MEMORY CREDENTIALS
         # =======================================================
         layout.addWidget(QLabel("Cloud Memory / Storage Credentials:"))
-        layout.addWidget(QLabel("Configure keys for Cloudflare R2, S3, or Network Drives.", styleSheet="color:#888; font-size:11px;"))
+        layout.addWidget(QLabel("Configure keys for Cloudflare R2, S3, or Network Drives."))
 
         # Provider
         self.storage_combo = QComboBox()
@@ -408,7 +721,6 @@ class SettingsView(QScrollArea):
 
     def run_test(self, test_name):
         """Simulates a connection test with a popup feedback."""
-        # Visual feedback on the button itself could be added here
         msg = QMessageBox(self)
         msg.setWindowTitle("Connection Test")
         msg.setText(f"Testing {test_name}...")
@@ -424,3 +736,14 @@ class SettingsView(QScrollArea):
         msg_box.setText(f"{test_name} Status: SUCCESS")
         msg_box.setInformativeText("Connection established. Latency: 24ms.")
         msg_box.setStandardButtons(QMessageBox.Ok)
+    
+    def closeEvent(self, event):
+        """Clean up services when closing."""
+        if self.desktop_service_thread:
+            self.desktop_service_thread.stop()
+            self.desktop_service_thread.wait()
+        if self.irongate_thread:
+            self.irongate_thread.stop()
+            self.irongate_thread.wait()
+
+        super().closeEvent(event)

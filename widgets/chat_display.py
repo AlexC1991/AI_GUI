@@ -1,6 +1,6 @@
 ﻿from PySide6.QtWidgets import QWidget, QVBoxLayout, QScrollArea, QFrame, QScrollBar
 from PySide6.QtCore import Qt, QTimer
-from widgets.message_bubble import MessageBubble, ThinkingBubble
+from widgets.message_bubble import MessageBubble, ThinkingBubble, ThinkingSection
 
 class ChatDisplay(QScrollArea):
     def __init__(self):
@@ -134,19 +134,36 @@ class ChatDisplay(QScrollArea):
         self.stream_text = ""
         self.buffered_text = ""
 
-    def rewrite_last_message(self, new_text):
-        """Updates the content of the last message bubble."""
+    def insert_widget_after_last_message(self, widget):
+        """Insert a widget (e.g. FileCardRow) at the end of the chat layout."""
+        self.layout.addWidget(widget)
+
+    def rewrite_last_message(self, new_text, history_text=None):
+        """Updates the display of the last message bubble.
+
+        If history_text is provided, the message history keeps that value
+        (preserving full context for the AI) while the bubble shows new_text.
+        """
         if not self.messages: return
-        
-        # Update Data
-        self.messages[-1]['content'] = new_text
-        
-        # Update UI
-        # The last item in layout is the bubble?
-        # Layout has bubbles.
-        count = self.layout.count()
-        if count > 0:
-            item = self.layout.itemAt(count - 1)
+
+        # Update history - keep full content for AI context if provided
+        self.messages[-1]['content'] = history_text if history_text else new_text
+
+        # Update display - find the last MessageBubble in layout
+        for i in range(self.layout.count() - 1, -1, -1):
+            item = self.layout.itemAt(i)
             widget = item.widget()
             if isinstance(widget, MessageBubble):
                 widget.set_content(new_text)
+                break
+
+    def start_thinking_section(self):
+        """Create and add a ThinkingSection widget. Returns it for streaming."""
+        section = ThinkingSection()
+        self.layout.addWidget(section)
+        return section
+
+    def end_thinking_section(self, section):
+        """Finalize a thinking section (collapse it, stop animation)."""
+        if section:
+            section.finalize()

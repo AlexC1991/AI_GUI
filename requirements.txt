@@ -11,3 +11,5 @@ accelerate
 safetensors
 paramiko
 scp
+scp
+gguf

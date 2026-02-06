@@ -10,7 +10,11 @@ from widgets.settings_view import SettingsView
 from widgets.image_gen_view import ImageGenView
 from utils.config_manager import ConfigManager
 from backend.chat_worker import ChatWorker
+from backend.search_service import SearchService
+from widgets.settings_view import DesktopServiceThread
 from utils.file_handler import FileHandler
+import os
+import re as _re
 
 class MainWindow(QMainWindow):
     def __init__(self):
@@ -18,6 +22,11 @@ class MainWindow(QMainWindow):
 
         self.setWindowTitle("VoxAI Orchestrator")
         self.resize(1400, 800)
+
+        # Thinking model state
+        self._in_thinking = False
+        self._thinking_buffer = ""
+        self._thinking_section = None
 
         central = QWidget()
         self.setCentralWidget(central)
@@ -68,6 +77,7 @@ class MainWindow(QMainWindow):
 
         # --- CONNECTIONS ---
         self.file_handler = FileHandler(self)
+        self.search_service = SearchService()
 
         # Connect Input Bar
         self.input_bar.send_button.clicked.connect(self.handle_send)
@@ -82,15 +92,65 @@ class MainWindow(QMainWindow):
 
         # CRITICAL: View Switching
         self.sidebar.mode_changed.connect(self.handle_mode_switch)
-        
+
         # Initial Model Check
         self._init_ollama_watcher()
 
+        # Auto-start Iron Desktop Service (local search/upload API on port 8001)
+        self._start_desktop_service()
+
+    @staticmethod
+    def _kill_port(port):
+        """Kill any process listening on the given port (Windows)."""
+        import subprocess, sys as _sys
+        if _sys.platform != "win32":
+            return
+        try:
+            # Get PID(s) on this port
+            r = subprocess.run(
+                ['powershell.exe', '-NoProfile', '-Command',
+                 f'(Get-NetTCPConnection -LocalPort {port} -State Listen '
+                 f'-ErrorAction SilentlyContinue).OwningProcess'],
+                capture_output=True, text=True, timeout=5
+            )
+            pids = [p.strip() for p in r.stdout.strip().split('\n') if p.strip().isdigit()]
+            if not pids:
+                return  # Port is free
+            my_pid = str(os.getpid())
+            for pid in pids:
+                if pid == my_pid:
+                    continue
+                print(f"[System] Killing stale process PID {pid} on port {port}...")
+                # Try taskkill (works across sessions)
+                subprocess.run(
+                    ['taskkill', '/F', '/PID', pid],
+                    capture_output=True, text=True, timeout=5
+                )
+            import time as _time
+            _time.sleep(0.5)
+        except Exception as e:
+            print(f"[System] Port {port} cleanup error: {e}")
+
+    def _start_desktop_service(self):
+        """Auto-start Iron Desktop Service (port 8001) for search & file APIs."""
+        # Kill any stale process on port 8001 first (from previous crashed session etc.)
+        self._kill_port(8001)
+
+        print("[System] Starting Iron Desktop Service (port 8001)...")
+        self._desktop_service = DesktopServiceThread()
+        self._desktop_service.started.connect(
+            lambda: print("[System] Iron Desktop Service started (localhost:8001)")
+        )
+        self._desktop_service.error.connect(
+            lambda e: print(f"[System] Desktop Service error: {e}")
+        )
+        self._desktop_service.start()
+
     def _init_ollama_watcher(self):
         """Start looking for models immediately."""
-        print("[DEBUG] Initializing Ollama Watcher...")
-        from backend.ollama_worker import OllamaWorker
-        self.ollama_list_worker = OllamaWorker("list")
+        print("[DEBUG] Initializing VoxAI Model Watcher...")
+        from backend.vox_model_worker import VoxModelWorker
+        self.ollama_list_worker = VoxModelWorker("list")
         self.ollama_list_worker.models_ready.connect(self.handle_ollama_list)
         self.ollama_list_worker.error.connect(self.handle_ollama_error)
         self.ollama_list_worker.start()
@@ -132,7 +192,7 @@ class MainWindow(QMainWindow):
                 except Exception:
                     pass  # Ignore disconnect errors
                 panel.gen_btn.clicked.connect(self.start_image_generation)
-                 
+
             if hasattr(panel, 'abort_btn'):
                 try:
                     panel.abort_btn.clicked.disconnect()
@@ -152,17 +212,18 @@ class MainWindow(QMainWindow):
         print("[DEBUG] Setting up backend workers...")
         from backend.image_worker import ImageWorker
         self.image_worker = ImageWorker()
-        
+
         # Connect image signals
         self.image_worker.progress.connect(self._on_gen_progress_msg)
         self.image_worker.step_progress.connect(self._on_gen_step)
         self.image_worker.finished.connect(self._on_gen_finished)
         self.image_worker.error.connect(self._on_gen_error)
         self.image_worker.auth_required.connect(self._on_auth_required)
-        
+
         self.chat_worker = ChatWorker()
         self.chat_worker.chunk_received.connect(self._on_chat_chunk)
-        self.chat_worker.finished.connect(self._on_chat_finished)
+        self.chat_worker.chat_finished.connect(self._on_chat_finished)
+        self.chat_worker.speed_update.connect(self._on_speed_update)
         self.chat_worker.error.connect(self._on_chat_error)
 
     def handle_ollama_list(self, models):
@@ -186,20 +247,20 @@ class MainWindow(QMainWindow):
         # Check backend
         if not hasattr(self, 'image_worker'):
             self._setup_backend()
-            
+
         view = self.image_gen_view
         panel = self.sidebar.current_panel
-        
+
         # UI State - Disable Sidebar Button
         if panel and hasattr(panel, 'gen_btn'):
             panel.gen_btn.setEnabled(False)
             if hasattr(panel, 'abort_btn'):
                 panel.abort_btn.setEnabled(True)
-        
+
         view.progress_bar.setValue(0)
         view.set_status("Starting generation...", "#4ade80")
         self.sidebar.update_status("processing")
-        
+
         # Gather Params using helper methods
         prompt = view.get_positive_prompt()
         neg_prompt = view.get_negative_prompt()
@@ -208,10 +269,10 @@ class MainWindow(QMainWindow):
         seed = view.get_seed()
         model = view.get_selected_checkpoint()
         sampler = view.get_sampler()
-        
+
         # Get resolution tuple directly (fixes the parsing error)
         width, height = view.get_resolution()
-        
+
         # Get LoRAs
         loras = view.get_active_loras()
         lora_name = loras[0][0] if loras else None
@@ -220,7 +281,7 @@ class MainWindow(QMainWindow):
         # Get VAE & Text Encoders
         vae_name = view.get_active_vae()
         text_encoders = view.get_active_text_encoders()
-        
+
         # Gather Paths from Config
         config = ConfigManager.load_config()
         img_cfg = config.get("image", {})
@@ -256,7 +317,7 @@ class MainWindow(QMainWindow):
         )
 
         self.image_worker.start()
-        
+
     def abort_generation(self):
         """Abort current generation."""
         if hasattr(self, 'image_worker'):
@@ -268,16 +329,16 @@ class MainWindow(QMainWindow):
     def _on_gen_progress_msg(self, msg):
         self.image_gen_view.set_status(msg, "#4ade80")
         self.sidebar.update_status(f"Generating...")
-    
+
     def _on_gen_step(self, step, total):
         self.image_gen_view.set_progress(step, total)
         self.image_gen_view.set_status(f"Step {step}/{total}", "#4ade80")
-    
+
     def _on_gen_finished(self, path):
         self._reset_gen_ui()
         self.sidebar.update_status("idle")
         self.image_gen_view.set_status(f"✅ Saved: {path}", "#4ade80")
-        
+
         # Display Image using helper method
         self.image_gen_view.show_image(path, 0)
 
@@ -286,13 +347,13 @@ class MainWindow(QMainWindow):
         self.sidebar.update_status("error")
         self.image_gen_view.set_status(f"❌ {err}", "#ef4444")
         print(f"Generation Error: {err}")
-    
+
     def _on_auth_required(self, model_name):
         """Handle HuggingFace authentication request."""
         self._reset_gen_ui()
         self.sidebar.update_status("auth required")
         self.image_gen_view.set_status("🔐 Authentication required", "#f59e0b")
-        
+
         # Show auth dialog
         from widgets.hf_auth_dialog import request_hf_auth
         if request_hf_auth(self, model_name):
@@ -309,19 +370,109 @@ class MainWindow(QMainWindow):
             if hasattr(self.sidebar.current_panel, 'abort_btn'):
                 self.sidebar.current_panel.abort_btn.setEnabled(False)
 
+    def _detect_search_intent(self, text):
+        """Detect if user wants a web search. Returns search query or None.
+
+        Only triggers for messages that clearly ask for a web search.
+        Must have both a search keyword AND a meaningful query (5+ chars).
+        """
+        lower = text.lower().strip()
+
+        # Too short to be a real search request
+        if len(lower) < 10:
+            return None
+
+        # --- Patterns: "search for X", "look up X", "google X" ---
+        patterns = [
+            # "search for best laptop" / "search best laptop under 900"
+            _re.compile(r'^search\s+(?:for\s+)?(.+)', _re.IGNORECASE),
+            # "look up next public holiday"
+            _re.compile(r'^look\s+up\s+(.+)', _re.IGNORECASE),
+            # "google best laptop deals"
+            _re.compile(r'^google\s+(.+)', _re.IGNORECASE),
+            # "find info on / find information about X"
+            _re.compile(r'^find\s+(?:info|information)\s+(?:on|about)\s+(.+)', _re.IGNORECASE),
+        ]
+        for pat in patterns:
+            m = pat.match(text)
+            if m:
+                query = m.group(1).strip().rstrip('?').strip()
+                if len(query) >= 5:
+                    return query
+
+        # --- "Can you search online for X" / "Could you look up X" ---
+        # These need special handling: extract everything AFTER "for" or the search keyword
+        conversational = [
+            # "can you search online for when the next holiday is" -> captures "when the next holiday is"
+            _re.compile(r'(?:can|could|would|please)?\s*(?:you\s+)?search\s+(?:online|the\s+web|the\s+internet)\s+(?:for\s+|and\s+(?:tell|find|show|let)\s+\w+\s+)(.+)', _re.IGNORECASE),
+            # "can you search for X"
+            _re.compile(r'(?:can|could|would|please)?\s*(?:you\s+)?search\s+for\s+(.+)', _re.IGNORECASE),
+            # "can you look up X"
+            _re.compile(r'(?:can|could|would|please)?\s*(?:you\s+)?look\s+up\s+(.+)', _re.IGNORECASE),
+        ]
+        for pat in conversational:
+            m = _re.search(pat, text)
+            if m:
+                query = m.group(1).strip().rstrip('?').strip()
+                if len(query) >= 5:
+                    return query
+
+        # --- Keyword-triggered: message contains "search online" / "search the web" ---
+        # Use the WHOLE message as the search query (stripped of the trigger phrase)
+        if 'search online' in lower or 'search the web' in lower or 'search the internet' in lower:
+            # Strip the trigger phrase and use the rest as query
+            query = _re.sub(r'(?:can|could|would|please)?\s*(?:you\s+)?search\s+(?:online|the\s+web|the\s+internet)\s*(?:for|and)?\s*', '', text, flags=_re.IGNORECASE).strip().rstrip('?').strip()
+            if len(query) >= 5:
+                return query
+            # If stripping leaves nothing useful, use the full text
+            return text.rstrip('?').strip()
+
+        return None
+
     def handle_send(self):
         user_text = self.input_bar.input.toPlainText().strip()
         if not user_text:
             return
-        
+
         # Add User Message
         self.chat_view.chat_display.add_message(user_text, "user")
         self.input_bar.input.clear()
-        
+
+        # Clear speed stats from previous response
+        self.input_bar.clear_speed()
+
+        # Check for web search intent
+        search_query = self._detect_search_intent(user_text)
+        prompt_text = user_text
+
+        if search_query:
+            try:
+                print(f"[Search] Searching for: {search_query}")
+                self.chat_view.chat_display.add_message(f"Searching the web for: *{search_query}*...", "ai")
+                results = self.search_service.search(search_query, max_results=5)
+                if results:
+                    # Show search results in chat
+                    result_lines = [f"**Web Search Results for: '{search_query}'**\n"]
+                    for i, r in enumerate(results, 1):
+                        result_lines.append(f"{i}. **{r['title']}**")
+                        result_lines.append(f"   {r['snippet']}")
+                        result_lines.append(f"   *{r['url']}*\n")
+                    search_display = "\n".join(result_lines)
+                    self.chat_view.chat_display.add_message(search_display, "ai")
+
+                    # Inject results into AI prompt
+                    search_context = self.search_service.format_for_ai(results, search_query)
+                    prompt_text = user_text + "\n" + search_context
+                else:
+                    self.chat_view.chat_display.add_message("[Search] No results found.", "ai")
+            except Exception as e:
+                print(f"[Search] Error: {e}")
+                self.chat_view.chat_display.add_message(f"[Search Error] {e}", "ai")
+
         # Check backend
         if not hasattr(self, 'chat_worker'):
             self._setup_backend()
-            
+
         # Get Settings from Sidebar/Config
         if not self.sidebar.current_panel or not hasattr(self.sidebar.current_panel, 'mode_combo'):
             mode = "Provider"
@@ -329,25 +480,36 @@ class MainWindow(QMainWindow):
         else:
             panel = self.sidebar.current_panel
             mode = panel.mode_combo.currentText()
-            model = panel.model_combo.currentText()
+            # If VoxAI Local, use the hidden filename (userData)
+            if "VoxAI" in mode:
+                model = panel.model_combo.currentData() or panel.model_combo.currentText()
+            else:
+                model = panel.model_combo.currentText()
 
         # Config for keys
         cfg = ConfigManager.load_config()
         llm_cfg = cfg.get("llm", {})
-        
+
         provider_type = "Gemini" if "Gemini" in model or "Provider" in mode else "Ollama"
         if "Llama" in model or "Mistral" in model or "Gemma" in model or "qwen" in model.lower():
             provider_type = "Ollama"
-             
+
         api_key = llm_cfg.get("api_key", "")
-        
+
         # Set Status to "Thinking"
         self.sidebar.update_status("thinking")
-        
+
+        # Reset streaming state
+        self._in_thinking = False
+        self._thinking_buffer = ""
+        self._thinking_section = None
+        self._chat_streaming_started = False
+        self._chat_finished_guard = False
+
         # Add the Thinking Bubble
         self.thinking_bubble = self.chat_view.chat_display.show_thinking()
         self.chat_view.chat_display.scroll_to_bottom()
-        
+
         # Map UI Name to API ID
         model_map = {
             "Gemini Pro": "gemini-1.5-pro",
@@ -356,90 +518,233 @@ class MainWindow(QMainWindow):
             "Mistral": "mistral",
             "Mistral:latest": "mistral:latest",
             "Gemma": "gemma",
-            "GPT-4o": "gpt-4o", 
+            "GPT-4o": "gpt-4o",
             "Claude 3.5": "claude-3-5-sonnet",
             "qwen2.5-coder:latest": "qwen2.5-coder:latest",
             "llama3.2:latest": "llama3.2:latest",
         }
         api_model = model_map.get(model, model)
-        
+
         # Start Worker
         self.chat_worker.setup(
             provider_type=provider_type,
             model_name=api_model,
             api_key=api_key,
-            prompt=user_text,
-            history=self.chat_view.chat_display.get_history()[:-1], 
+            prompt=prompt_text,
+            history=self.chat_view.chat_display.get_history()[:-1],
             system_prompt=None
         )
         self.chat_worker.start()
 
     def _on_chat_chunk(self, chunk):
-        # Remove thinking bubble on first chunk
+        # Remove thinking bubble (dots) on first chunk
         if hasattr(self, 'thinking_bubble') and self.thinking_bubble:
             self.chat_view.chat_display.remove_bubble(self.thinking_bubble)
             self.thinking_bubble = None
-            self.chat_view.chat_display.start_streaming_message()
-            
-        self.chat_view.chat_display.update_streaming_message(chunk)
+
+        # --- Thinking model detection (<think>...</think>) ---
+        text = self._thinking_buffer + chunk
+        self._thinking_buffer = ""
+
+        while text:
+            if self._in_thinking:
+                # Look for </think> closing tag
+                end_idx = text.find("</think>")
+                if end_idx != -1:
+                    # Send remaining thinking text to section
+                    thinking_part = text[:end_idx]
+                    if thinking_part and self._thinking_section:
+                        self._thinking_section.append_text(thinking_part)
+
+                    # Finalize thinking section
+                    self.chat_view.chat_display.end_thinking_section(self._thinking_section)
+                    self._in_thinking = False
+                    self._thinking_section = None
+
+                    text = text[end_idx + len("</think>"):]
+                    continue
+                else:
+                    # Check for partial tag at end
+                    for partial in ["</think", "</thin", "</thi", "</th", "</t", "</", "<"]:
+                        if text.endswith(partial):
+                            self._thinking_buffer = partial
+                            text = text[:-len(partial)]
+                            break
+
+                    if text and self._thinking_section:
+                        self._thinking_section.append_text(text)
+                    return
+            else:
+                # Look for <think> opening tag
+                start_idx = text.find("<think>")
+                if start_idx != -1:
+                    # Send text before <think> to chat bubble
+                    before = text[:start_idx]
+                    if before.strip():
+                        if not hasattr(self, '_chat_streaming_started') or not self._chat_streaming_started:
+                            self.chat_view.chat_display.start_streaming_message()
+                            self._chat_streaming_started = True
+                        self.chat_view.chat_display.update_streaming_message(before)
+
+                    # Start thinking section
+                    self._in_thinking = True
+                    self._thinking_section = self.chat_view.chat_display.start_thinking_section()
+                    self.sidebar.update_status("reasoning")
+
+                    text = text[start_idx + len("<think>"):]
+                    continue
+                else:
+                    # Check for partial tag at end
+                    for partial in ["<think", "<thin", "<thi", "<th", "<t", "<"]:
+                        if text.endswith(partial):
+                            self._thinking_buffer = partial
+                            text = text[:-len(partial)]
+                            break
+
+                    # Normal text -> chat bubble
+                    if text:
+                        if not hasattr(self, '_chat_streaming_started') or not self._chat_streaming_started:
+                            self.chat_view.chat_display.start_streaming_message()
+                            self._chat_streaming_started = True
+                        self.chat_view.chat_display.update_streaming_message(text)
+                    return
 
     def _on_chat_finished(self):
-        self.chat_view.chat_display.end_streaming_message()
-        self.sidebar.update_status("idle")
-        
-        # --- CODE EXTRACTION LOGIC ---
         import re
+
+        # Guard against double execution
+        if getattr(self, '_chat_finished_guard', False):
+            print("[CodeExtract] Guard: _on_chat_finished already ran, skipping")
+            return
+        self._chat_finished_guard = True
+
+        # Finalize any remaining thinking section
+        if self._in_thinking and self._thinking_section:
+            # Flush remaining buffer
+            if self._thinking_buffer:
+                self._thinking_section.append_text(self._thinking_buffer)
+                self._thinking_buffer = ""
+            self.chat_view.chat_display.end_thinking_section(self._thinking_section)
+            self._in_thinking = False
+            self._thinking_section = None
+
+        # Only end streaming if we started a chat bubble
+        if getattr(self, '_chat_streaming_started', False):
+            self.chat_view.chat_display.end_streaming_message()
+        self.sidebar.update_status("idle")
+
+        # --- POST-MESSAGE CODE EXTRACTION ---
         history = self.chat_view.chat_display.get_history()
         if not history:
+            print("[CodeExtract] No history found")
             return
-        
+
         last_msg = history[-1]
         if last_msg['role'] != 'assistant':
+            print(f"[CodeExtract] Last msg role is '{last_msg['role']}', not assistant")
             return
-        
+
         content = last_msg['content']
-        extracted_count = 0
-        
-        def replacement_handler(match):
-            nonlocal extracted_count
-            lang = match.group(1)
-            code = match.group(2)
-            
-            if not code or not code.strip():
-                return match.group(0)
+        print(f"[CodeExtract] Content length: {len(content)}, first 200 chars: {repr(content[:200])}")
 
-            lang = lang.strip() if lang else "text"
-            lang = lang.lower()
-            
-            # Generate Filename
-            ext = lang
-            if lang == "python":
-                ext = "py"
-            elif lang == "javascript":
-                ext = "js"
-            elif lang == "c++":
-                ext = "cpp"
-            elif lang == "c#":
-                ext = "cs"
-            elif lang == "markdown":
-                ext = "md"
-            
-            filename = f"script_{extracted_count}.{ext}"
-            
-            # Add to Code Panel
-            self.code_panel.add_file(filename, code.strip())
+        # Strip <think>...</think> from content for display purposes
+        clean_content = re.sub(r'<think>.*?</think>', '', content, flags=re.DOTALL).strip()
+
+        # Find all code blocks
+        pattern = r"```\s*(\w+)?[ \t]*\r?\n(.*?)```"
+        blocks = list(re.finditer(pattern, clean_content, flags=re.DOTALL))
+        print(f"[CodeExtract] Found {len(blocks)} code fence matches in content")
+
+        # --- FILENAME-DRIVEN EXTRACTION ---
+        FILE_EXTENSIONS = r'py|js|ts|html|css|cpp|h|json|txt|md|bat|sh|sql|go|rs|java|rb|php'
+        FILENAME_PATTERN = re.compile(
+            r'(?:\*{2}|#{1,3}\s+|[Ff]ile:\s*)?'
+            r'([a-zA-Z0-9_\-]+\.(?:' + FILE_EXTENSIONS + r'))'
+            r'\*{0,2}\s*:?\s*$'
+        )
+
+        # Pass 1: Scan blocks, detect filenames, group by filename
+        named_files = {}
+        named_match_indices = set()
+
+        for idx, match in enumerate(blocks):
+            lang = (match.group(1) or "text").strip().lower()
+            code = match.group(2).strip()
+            code_lines = [l for l in code.split('\n') if l.strip()]
+
+            if len(code_lines) < 2:
+                continue
+
+            preceding = clean_content[max(0, match.start() - 300):match.start()]
+            name_match = FILENAME_PATTERN.search(preceding)
+
+            if name_match:
+                filename = name_match.group(1)
+                print(f"[CodeExtract]   Block {idx}: detected filename '{filename}' ({len(code_lines)} lines)")
+
+                if filename not in named_files:
+                    named_files[filename] = {'lang': lang, 'codes': [], 'match_indices': []}
+
+                named_files[filename]['codes'].append(code)
+                named_files[filename]['match_indices'].append(idx)
+                named_match_indices.add(idx)
+            else:
+                print(f"[CodeExtract]   Block {idx}: no filename (explanation snippet, {len(code_lines)} lines)")
+
+        print(f"[CodeExtract] {len(named_files)} named files found: {list(named_files.keys())}")
+
+        if not named_files:
+            return
+
+        # Pass 2: Merge code blocks per filename
+        real_blocks = []
+        for filename, info in named_files.items():
+            merged_code = '\n\n'.join(info['codes'])
+            real_blocks.append((info['lang'], merged_code, filename))
+            print(f"[CodeExtract]   Merged '{filename}': {len(info['codes'])} blocks -> {len(merged_code)} chars")
+
+        # --- Strip named code blocks from the chat bubble display ---
+        display_text = clean_content
+
+        for idx in sorted(named_match_indices, reverse=True):
+            match = blocks[idx]
+            display_text = display_text[:match.start()] + display_text[match.end():]
+
+        for filename in named_files.keys():
+            fn_escaped = re.escape(filename)
+            display_text = re.sub(
+                r'(?:^|\n)\s*(?:#{1,3}\s+|\*{2}|[Ff]ile:\s*)?' + fn_escaped + r'\*{0,2}:?\s*(?:\n|$)',
+                '\n', display_text
+            )
+
+        display_text = re.sub(r'\n{3,}', '\n\n', display_text).strip()
+
+        if display_text:
+            self.chat_view.chat_display.rewrite_last_message(display_text, history_text=content)
+        else:
+            self.chat_view.chat_display.rewrite_last_message("Here's the code:", history_text=content)
+
+        # --- Create file cards ---
+        from widgets.file_card import FileCardRow, LANG_EXTENSIONS
+        self.code_panel.clear_files()
+
+        card_row = FileCardRow()
+        for lang, code, filename in real_blocks:
+            self.code_panel.add_file(filename, code, lang, auto_open=False)
+            card = card_row.add_card(filename, code, lang)
+            card.clicked.connect(self._on_file_card_clicked)
+
+        self.chat_view.chat_display.insert_widget_after_last_message(card_row)
+
+    def _on_file_card_clicked(self, filename, content, language):
+        """Open the CodePanel with the clicked file selected."""
+        self.code_panel.file_selector.setCurrentText(filename)
+        if self.code_panel.width() == 0:
             self.code_panel.slide_in()
-            extracted_count += 1
-            
-            return f"\n> *[Code extracted to Utility Panel: {filename}]*\n"
 
-        # Regex to find ```language ... ``` blocks
-        new_content = re.sub(r"```(\w+)?\n(.*?)```", replacement_handler, content, flags=re.DOTALL)
-        
-        # Update UI if changes were made
-        if extracted_count > 0:
-            self.chat_view.chat_display.rewrite_last_message(new_content)
-            self.sidebar.update_status(f"Extracted {extracted_count} snippets")
+    def _on_speed_update(self, speed, tokens, duration):
+        """Display tokens/sec stats below the input bar."""
+        self.input_bar.show_speed(speed, tokens, duration)
 
     def _on_chat_error(self, err):
         self.chat_view.chat_display.update_streaming_message(f"\n[Error: {err}]")
@@ -450,33 +755,117 @@ class MainWindow(QMainWindow):
         self.chat_view.chat_display.clear_chat()
         self.sidebar.update_status("idle")
         self.code_panel.slide_out()
+        self.input_bar.clear_speed()
 
     def handle_upload(self):
         file_path = self.file_handler.open_file_dialog()
         if file_path:
             file_data = self.file_handler.process_file(file_path)
-            
+
             content = ""
-            if file_data['extension'] in ['.py', '.txt', '.json', '.js', '.md', '.csv']:
+            TEXT_EXTS = ['.py', '.txt', '.json', '.js', '.md', '.csv', '.html', '.css',
+                         '.xml', '.yaml', '.yml', '.log', '.ts', '.jsx', '.tsx', '.sh',
+                         '.bat', '.cfg', '.ini', '.toml', '.sql', '.java', '.cpp', '.c',
+                         '.h', '.rs', '.go', '.rb', '.php']
+
+            if file_data['extension'] in TEXT_EXTS:
                 try:
-                    with open(file_path, 'r', encoding='utf-8') as f:
+                    with open(file_path, 'r', encoding='utf-8', errors='replace') as f:
                         content = f.read()
+                    # Limit very large files
+                    if len(content) > 6000:
+                        content = content[:6000] + '\n... [truncated]'
                     self.code_panel.add_file(file_data['name'], content)
                 except Exception as e:
                     print(f"Error reading file: {e}")
 
-            # Inject into Chat History with nice UI but full context
+            # Build context message for AI and display message for user
             if content:
-                context_msg = f"I am uploading a file named '{file_data['name']}'.\n\nCONTENT:\n```\n{content}\n```\n\nPlease analyze this file."
+                context_msg = (f"I am uploading a file named '{file_data['name']}' "
+                               f"({file_data['size']}).\n\nFILE CONTENT:\n```\n{content}\n```\n\n"
+                               f"Please analyze this file and tell me what it does.")
                 display_msg = f"📂 Uploaded: {file_data['name']} ({file_data['size']})"
                 self.chat_view.chat_display.add_message(context_msg, "user", display_text=display_msg)
             else:
-                self.chat_view.chat_display.add_message(f"📂 Uploaded: {file_data['name']}", "user")
+                context_msg = (f"I am uploading a file named '{file_data['name']}' "
+                               f"({file_data['size']}, {file_data['extension']} file). "
+                               f"This is a binary file so I cannot show the content directly. "
+                               f"Please acknowledge you understand a file was uploaded.")
+                display_msg = f"📂 Uploaded: {file_data['name']} ({file_data['size']})"
+                self.chat_view.chat_display.add_message(context_msg, "user", display_text=display_msg)
 
-            # Simulate AI acknowledgement
-            QTimer.singleShot(1000, lambda: self.finalize_ai_response(
-                f"I've loaded **{file_data['name']}** into the context."
-            ))
+            # Actually send to AI instead of fake response
+            self._send_after_upload()
+
+    def _send_after_upload(self):
+        """Trigger AI response after a file upload, using the file context in history."""
+        # Check backend
+        if not hasattr(self, 'chat_worker'):
+            self._setup_backend()
+
+        # Get Settings from Sidebar/Config
+        if not self.sidebar.current_panel or not hasattr(self.sidebar.current_panel, 'mode_combo'):
+            mode = "Provider"
+            model = "Gemini Pro"
+        else:
+            panel = self.sidebar.current_panel
+            mode = panel.mode_combo.currentText()
+            if "VoxAI" in mode:
+                model = panel.model_combo.currentData() or panel.model_combo.currentText()
+            else:
+                model = panel.model_combo.currentText()
+
+        cfg = ConfigManager.load_config()
+        llm_cfg = cfg.get("llm", {})
+
+        provider_type = "Gemini" if "Gemini" in model or "Provider" in mode else "Ollama"
+        if "Llama" in model or "Mistral" in model or "Gemma" in model or "qwen" in model.lower():
+            provider_type = "Ollama"
+
+        api_key = llm_cfg.get("api_key", "")
+
+        self.sidebar.update_status("thinking")
+        self._in_thinking = False
+        self._thinking_buffer = ""
+        self._thinking_section = None
+        self._chat_streaming_started = False
+        self._chat_finished_guard = False
+
+        self.thinking_bubble = self.chat_view.chat_display.show_thinking()
+        self.chat_view.chat_display.scroll_to_bottom()
+
+        model_map = {
+            "Gemini Pro": "gemini-1.5-pro",
+            "Llama 3": "llama3",
+            "Ministral 8B": "ministral",
+            "Mistral": "mistral",
+            "Mistral:latest": "mistral:latest",
+            "Gemma": "gemma",
+            "GPT-4o": "gpt-4o",
+            "Claude 3.5": "claude-3-5-sonnet",
+            "qwen2.5-coder:latest": "qwen2.5-coder:latest",
+            "llama3.2:latest": "llama3.2:latest",
+        }
+        api_model = model_map.get(model, model)
+
+        # The last message in history IS the file content (user message)
+        # Send it as the prompt, with history being everything before it
+        history = self.chat_view.chat_display.get_history()
+        if history:
+            prompt = history[-1]['content']
+            prev_history = history[:-1]
+        else:
+            return
+
+        self.chat_worker.setup(
+            provider_type=provider_type,
+            model_name=api_model,
+            api_key=api_key,
+            prompt=prompt,
+            history=prev_history,
+            system_prompt=None
+        )
+        self.chat_worker.start()
 
     def finalize_ai_response(self, text):
         """Adds a simple AI message to the chat (used for system events)."""
@@ -485,23 +874,31 @@ class MainWindow(QMainWindow):
     def closeEvent(self, event):
         """Cleanup workers on exit to prevent crash."""
         print("[System] Shutting down...")
-        
+
+        # Stop Desktop Service (thread + force-kill the port)
+        if hasattr(self, '_desktop_service') and self._desktop_service.isRunning():
+            print("Stopping Desktop Service...")
+            self._desktop_service.stop()
+            self._desktop_service.wait(3000)
+        # Force-kill port 8001 in case the process outlives the thread
+        self._kill_port(8001)
+
         # Stop Chat Worker
         if hasattr(self, 'chat_worker') and self.chat_worker.isRunning():
             print("Stopping Chat Worker...")
             self.chat_worker.quit()
             self.chat_worker.wait(1000)
-            
+
         # Stop Image Worker
         if hasattr(self, 'image_worker') and self.image_worker.isRunning():
             print("Stopping Image Worker...")
             self.image_worker.quit()
             self.image_worker.wait(1000)
-            
+
         # Stop Ollama List Worker
         if hasattr(self, 'ollama_list_worker') and self.ollama_list_worker.isRunning():
             print("Stopping Ollama Worker...")
             self.ollama_list_worker.quit()
             self.ollama_list_worker.wait(1000)
-            
+
         super().closeEvent(event)

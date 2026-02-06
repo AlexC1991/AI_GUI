@@ -9,12 +9,14 @@ import sys
 from utils.ollama_helper import get_ollama_path
 from utils.config_manager import ConfigManager
 from providers.gemini_provider import GeminiProvider
-from providers.ollama_provider import OllamaProvider
+from providers.gemini_provider import GeminiProvider
+from providers.vox_provider import VoxProvider
 from providers.base_provider import Message
 
 class ChatWorker(QThread):
     chunk_received = Signal(str)
-    finished = Signal()
+    chat_finished = Signal()
+    speed_update = Signal(float, int, float)  # speed_tps, token_count, duration_secs
     error = Signal(str)
 
     def __init__(self):
@@ -33,7 +35,21 @@ class ChatWorker(QThread):
         self.api_key = api_key
         self.prompt = prompt
         self.history = history
-        self.system_prompt = system_prompt
+        
+        # Enforce Code Protocol
+        protocol = (
+            " When providing code or scripts, follow these rules strictly:"
+            " 1. When writing a NEW script or file, put the COMPLETE code in ONE single code block"
+            " 2. State the filename on the line before the code block (e.g. '**app.py**')"
+            " 3. NEVER split one script across multiple code blocks - put it ALL in one block"
+            " 4. When EXPLAINING existing code, do NOT use a filename header - just use code blocks without naming them"
+            " 5. Each unique file must have a different filename"
+        )
+
+        if system_prompt:
+            self.system_prompt = system_prompt + protocol
+        else:
+            self.system_prompt = "You are a helpful assistant." + protocol
 
     def run(self):
         print(f"[DEBUG] ChatWorker started for provider: {self.provider_type}, model: {self.model_name}")
@@ -42,20 +58,9 @@ class ChatWorker(QThread):
             if self.provider_type == "Gemini":
                 print("[DEBUG] Initializing Gemini Provider")
                 self._provider = GeminiProvider(model=self.model_name, api_key=self.api_key)
-            elif self.provider_type == "Ollama":
-                print("[DEBUG] Initializing Ollama Provider")
-                # AUTO-START OLLAMA LOGIC
-                if not self._is_ollama_running():
-                    print("[DEBUG] Ollama not running. Attempting auto-start...")
-                    self.chunk_received.emit("[System: Starting Ollama Server...]\n")
-                    if not self._start_ollama():
-                        print("[DEBUG] Failed to start Ollama")
-                        self.error.emit("Failed to start Ollama. Is it installed?")
-                        return
-                    print("[DEBUG] Ollama started successfully")
-                    self.chunk_received.emit("[System: Ollama Started. Generating...]\n")
-                
-                self._provider = OllamaProvider(model=self.model_name)
+            elif self.provider_type == "VoxAI" or self.provider_type == "Ollama": # Backwards compat
+                print(f"[DEBUG] Initializing VoxAI Provider with model: {self.model_name}")
+                self._provider = VoxProvider(model_name=self.model_name)
             else:
                 self.error.emit(f"Unknown provider: {self.provider_type}")
                 return
@@ -70,58 +75,25 @@ class ChatWorker(QThread):
                     msg_history.append(h)
             
             print(f"[DEBUG] History prepared ({len(msg_history)} messages). Starting stream...")
+            token_count = 0
+            start_time = time.perf_counter()
+
             for chunk in self._provider.stream_message(
                 prompt=self.prompt,
                 history=msg_history,
                 system_prompt=self.system_prompt
             ):
+                token_count += 1
                 self.chunk_received.emit(chunk)
-            
-            self.finished.emit()
+
+            duration = time.perf_counter() - start_time
+            speed = token_count / duration if duration > 0 else 0
+            print(f"[ChatWorker] {speed:.2f} t/s ({token_count} tokens, {duration:.2f}s)")
+            self.speed_update.emit(speed, token_count, duration)
+            self.chat_finished.emit()
 
         except Exception as e:
             traceback.print_exc()
             self.error.emit(str(e))
 
-    def _is_ollama_running(self):
-        try:
-            with socket.create_connection(("localhost", 11434), timeout=1):
-                return True
-        except (socket.timeout, ConnectionRefusedError):
-            return False
 
-    def _start_ollama(self):
-        ollama_exe = get_ollama_path()
-        if not ollama_exe:
-            return False
-            
-        try:
-            # Prepare Environment
-            config = ConfigManager.load_config()
-            llm_cfg = config.get("llm", {})
-            custom_dir = llm_cfg.get("local_model_dir", "")
-            
-            env = os.environ.copy()
-            if custom_dir:
-                # Ensure absolute path
-                abs_path = os.path.abspath(custom_dir)
-                if not os.path.exists(abs_path):
-                    os.makedirs(abs_path, exist_ok=True)
-                env["OLLAMA_MODELS"] = abs_path
-
-            # Start detached process
-            subprocess.Popen(
-                [ollama_exe, "serve"], 
-                creationflags=subprocess.CREATE_NO_WINDOW if sys.platform == 'win32' else 0,
-                env=env
-            )
-            
-            # Wait for it to come up (max 10s)
-            for _ in range(10):
-                if self._is_ollama_running():
-                    return True
-                time.sleep(1)
-                
-            return False
-        except Exception:
-            return False

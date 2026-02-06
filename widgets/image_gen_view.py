@@ -502,8 +502,17 @@ class ImageGenView(QWidget):
             tab = self.output_tabs.widget(tab_index)
             lbl = tab.findChild(QLabel, "preview_label")
             if lbl and Path(path).exists():
-                lbl.setPixmap(pix)
-                lbl.setStyleSheet("")
+                # FIX: Actually load the image from path
+                pix = QPixmap(str(path))
+                if not pix.isNull():
+                    # Scale to fit label while maintaining aspect ratio
+                    scaled = pix.scaled(
+                        lbl.size(),
+                        Qt.KeepAspectRatio,
+                        Qt.SmoothTransformation
+                    )
+                    lbl.setPixmap(scaled)
+                    lbl.setStyleSheet("")
 
     # --- LLM ENHANCEMENT LOGIC ---
     def enhance_prompt(self):
@@ -525,19 +534,21 @@ class ImageGenView(QWidget):
         model_name = llm_cfg.get("model", "llama3.2:latest") 
         provider = llm_cfg.get("provider", "Ollama")
         
-        # 2. Logic from MainWindow: Force correct provider based on model name
-        # If the model name looks like a local model, force Ollama
-        if any(x in model_name.lower() for x in ["llama", "mistral", "gemma", "qwen"]):
-            provider = "Ollama"
+        # 2. Logic: Force correct provider based on model name
+        # If the model name looks like a local model, force VoxAI
+        if any(x in model_name.lower() for x in ["llama", "mistral", "gemma", "qwen", "phi", "vicuna"]):
+            provider = "VoxAI"
         elif "gemini" in model_name.lower():
             provider = "Gemini"
+        else:
+            # Default fallback
+            provider = "VoxAI"
             
         # 3. Model ID Mapping (Simple version)
+        # For VoxAI, we pass the raw filename or name. For Gemini, we map to API ID.
         model_map = {
-            "Llama 3": "llama3",
-            "Llama 3.2": "llama3.2:latest",
-            "Mistral": "mistral",
-            "Gemini Pro": "gemini-1.5-pro"
+            "Gemini Pro": "gemini-1.5-pro",
+            "GPT-4o": "gpt-4o",
         }
         api_model = model_map.get(model_name, model_name)
         
@@ -553,7 +564,7 @@ class ImageGenView(QWidget):
         )
         
         self.enhancer.setup(
-            provider_type="Ollama" if "Gemini" not in provider else "Gemini",
+            provider_type=provider,
             model_name=api_model,
             api_key=llm_cfg.get("api_key", ""),
             prompt=f"Enhance this prompt for high quality image generation: '{original}'",

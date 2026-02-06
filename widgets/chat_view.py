@@ -21,9 +21,5 @@ class ChatView(QFrame):  # Changed from QWidget to QFrame for better styling
         self.chat_display = ChatDisplay()
         self.layout.addWidget(self.chat_display)
 
-        # --- TEST MESSAGES ---
-        self.add_message("System initialized.", "ai")
-        self.add_message("Border styling moved to wrapper.", "user")
-
     def add_message(self, text, sender="user", display_text=None):
         self.chat_display.add_message(text, sender, display_text)
