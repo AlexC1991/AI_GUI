@@ -57,6 +57,8 @@ VoxAI isn't just another AI GUI—it's an **agentic framework** that gives local
 | **Failsafe** | Catches refusals and auto-searches |
 | **Natural** | Just ask normally—the AI handles the rest |
 
+> **Note:** Agentic Search requires the Desktop Service to be running (starts from Settings or `python Vox_IronGate/iron_desktop.py`)
+
 ### Image Generation
 | Feature | Description |
 |---------|-------------|
