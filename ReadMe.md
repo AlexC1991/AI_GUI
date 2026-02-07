@@ -125,27 +125,68 @@ Build from [llama.cpp](https://github.com/ggerganov/llama.cpp) with Vulkan, or u
 
 ## 🎯 Model Setup
 
-### Chat Models (GGUF)
+### Chat Models (GGUF) — Required for Local AI Chat
+
+Place `.gguf` model files in the `VoxAI_Chat_API/models/` folder:
+
 ```
-VoxAI_Chat_API/models/
-  ├── Qwen3-8B-Q5_K_M.gguf
-  ├── Llama-3.2-3B-Instruct-Q4_K_M.gguf
-  └── Any GGUF model works!
+AI_GUI/
+└── VoxAI_Chat_API/
+    └── models/                          ← Put GGUF files here
+        ├── Qwen3-8B-Q5_K_M.gguf        ← Recommended for agentic search
+        ├── Llama-3.2-3B-Instruct.gguf  ← Lightweight alternative
+        └── (any .gguf model works!)
 ```
 
-### Image Models
+**Recommended Models:**
+| Model | Size | VRAM | Best For | Download |
+|-------|------|------|----------|----------|
+| Qwen3-8B-Q5_K_M | 5.5GB | 8GB | Agentic search, reasoning | [HuggingFace](https://huggingface.co/Qwen) |
+| Llama-3.2-3B-Instruct | 2GB | 4GB | Fast responses, low VRAM | [HuggingFace](https://huggingface.co/meta-llama) |
+| Mistral-7B-Instruct | 4GB | 6GB | General purpose | [HuggingFace](https://huggingface.co/mistralai) |
+| Phi-3-mini-4k | 2.4GB | 4GB | Small but capable | [HuggingFace](https://huggingface.co/microsoft) |
+
+> **Tip:** Q4_K_M or Q5_K_M quantizations offer the best quality/size balance.
+
+---
+
+### Image Models — Optional for Image Generation
+
 ```
-models/
-  ├── checkpoints/    # Diffusion models
-  ├── loras/          # LoRA files
-  ├── vae/            # VAE files
-  └── text_encoders/  # CLIP/T5 encoders
+AI_GUI/
+└── models/
+    ├── checkpoints/                     ← Diffusion model files
+    │   ├── sd_xl_base_1.0.safetensors  ← SDXL base
+    │   ├── ponyDiffusionV6XL.safetensors
+    │   └── flux1-schnell-Q4_K_S.gguf   ← Flux (8GB VRAM!)
+    │
+    ├── loras/                           ← LoRA style files
+    │   └── your-lora-file.safetensors
+    │
+    ├── vae/                             ← VAE files (optional)
+    │   └── sdxl_vae.safetensors
+    │
+    └── text_encoders/                   ← For Flux models
+        ├── clip_l.safetensors          ← CLIP encoder
+        └── t5-v1_1-xxl-encoder-Q4_K_M.gguf  ← T5 GGUF
 ```
 
-### Flux on 8GB VRAM
-1. `flux1-schnell-Q4_K_S.gguf` from [city96/FLUX.1-schnell-gguf](https://huggingface.co/city96/FLUX.1-schnell-gguf)
-2. `t5-v1_1-xxl-encoder-Q4_K_M.gguf` for text encoder
-3. `clip_l.safetensors` for CLIP
+**Supported Formats:** `.safetensors`, `.ckpt`, `.gguf`
+
+---
+
+### Flux on 8GB VRAM — Budget-Friendly Setup
+
+Flux normally requires 24GB+ VRAM, but with GGUF quantization you can run it on 8GB:
+
+1. **Download the GGUF model:**
+   - [flux1-schnell-Q4_K_S.gguf](https://huggingface.co/city96/FLUX.1-schnell-gguf) → `models/checkpoints/`
+
+2. **Download text encoders:**
+   - [t5-v1_1-xxl-encoder-Q4_K_M.gguf](https://huggingface.co/city96/t5-v1_1-xxl-encoder-gguf) → `models/text_encoders/`
+   - [clip_l.safetensors](https://huggingface.co/comfyanonymous/flux_text_encoders) → `models/text_encoders/`
+
+3. **Select in the app:** Choose the Flux model from the Image Generation tab
 
 ---
 
