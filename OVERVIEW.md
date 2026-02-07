@@ -1,78 +1,88 @@
-# Project Overview: AI_GUI (VoxAI Orchestrator)
+# VoxAI Orchestrator - Technical Overview
 
-## 🎯 The Vision
+## 🎯 High Level Architecture
 
-AI_GUI is the "Operating System" for local AI. Instead of juggling multiple applications (ComfyUI for images, Ollama for chat, separate code editors), AI_GUI brings them into a single, native, high-performance desktop application optimized for AMD GPUs via ZLUDA.
+VoxAI Orchestrator is designed as a modular, local-first AI operating system. It moves away from the fragmented ecosystem of separate tools (Ollama for chat, ComfyUI for images) into a single, unified PyQt6 application.
 
-## 🏗 Architecture
+The core philosophy is **Native Implementation**:
+- **No API wrappers around other local servers** (where possible).
+- **Direct integration** with `llama.cpp` for text via `llama-cpp-python`.
+- **Direct integration** with `Diffusers` for images.
+- **Direct integration** with `DuckDuckGo` for search.
 
-The project uses a **Modular Frontend** with a **Native Backend** approach.
+This reduces overhead, simplifies dependency management, and allows for deeper integration like shared memory management and unified hardware monitoring.
 
-### Frontend
-- **Framework:** PySide6 (Qt6) desktop application
-- **Layout:** Sidebar navigation with switchable views (Chat, Image Gen, Gallery, Settings)
-- **Theme:** Dark mode with modern styling
+## 🏗 Core Components
 
-### Backend (Implemented)
-- **Chat:** 
-  - Ollama integration (local LLMs)
-  - Gemini API support (cloud)
-  - Real-time streaming responses
-  
-- **Image Generation:**
-  - Native Diffusers backend (no ComfyUI dependency)
-  - Multi-model support: SD 1.5, SD 2.x, SDXL, Pony, Flux
-  - GGUF quantized model support for low VRAM
-  - ZLUDA optimization for AMD GPUs
-  - Custom VAE, LoRA, and Text Encoder support
-  - CPU offload for 8GB VRAM systems
+### 1. The Orchestrator (`main_window.py`)
+The central nervous system of the application. It handles:
+- **Thread Management:** Spawning and monitoring `QThread` workers for Chat, Image Gen, and Search.
+- **State Management:** Tracking conversation history, model states, and hardware utilization.
+- **Signal Routing:** Connecting UI events to backend workers and vice-versa.
 
-- **Hardware:**
-  - AMD GPU support via ZLUDA
-  - Real-time VRAM/RAM monitoring
-  - Automatic model family detection
-  - Memory-optimized loading strategies
+### 2. VoxAI Chat Engine (`VoxAI_Chat_API/`)
+A custom local inference engine built on top of `llama-cpp-python`.
+- **Hardware Handshake:** Automatically detects NVIDIA (CUDA), AMD (ZLUDA/Vulkan), or CPU capabilities on startup.
+- **Model Hot-Swapping:** Unloads/reloads models dynamically to manage VRAM.
+- **Thinking Blocks:** Parses `<think>` tags from reasoning models and formats them into collapsible UI elements.
+- **Context Management:** Handles sliding windows and context limits automatically.
 
-## 🎮 Supported Models
+### 3. Agentic Search & Metacognition
+Instead of traditional RAG (Retrieval Augmented Generation), VoxAI uses an **Agentic** approach.
+- **Metacognition:** The system prompt instructs the AI to recognize its own knowledge cutoffs.
+- **Autonomous Trigger:** The AI decides *when* to search based on the user prompt. No explicit `[Search]` command is required from the user.
+- **Failsafe:** If the AI refuses a task due to lack of real-time info, the system intercepts the refusal and triggers a search automatically.
+- **Desktop Service:** Runs a lightweight local API (`iron_desktop.py`) to handle sanitized web searches.
 
-| Model Type | VRAM Required | Status |
-|------------|---------------|--------|
-| SD 1.5 | ~4GB | ✅ Working |
-| SD 2.x | ~5GB | ✅ Working |
-| SDXL | ~6GB | ✅ Working |
-| Pony (SDXL-based) | ~6GB | ✅ Working |
-| Flux (GGUF Q4) | ~8GB | ✅ Working |
-| Flux (safetensors) | 12GB+ | ✅ Working |
+### 4. Image Generation Backend (`backend/image_generator.py`)
+A custom implementation of the HuggingFace `Diffusers` library.
+- **Pipeline Strategy:** Uses a Singleton pattern to keep models loaded only when needed.
+- **VRAM Optimization:** Aggressive offloading and `bfloat16`/`float16` management.
+- **Model Support:**
+    - **SD 1.5 / SD 2.1:** Standard pipelines.
+    - **SDXL / Pony:** `StableDiffusionXLPipeline` with specialized schedulers.
+    - **Flux.1:** Supports `FluxPipeline` and **GGUF Quantized Flux** models (allowing Flux on 8GB VRAM).
+- **AMD ZLUDA:** Special initialization paths to enable CUDA-like performance on AMD ROCm via ZLUDA.
 
-## 🛣 Roadmap
+### 5. IronGate Remote Access (`Vox_IronGate/`)
+A secure gateway for remote access.
+- **Tunneling:** Uses `ngrok` to tunnel localhost to a secure public URL.
+- **Security:**
+    - IP Banning & Rate Limiting.
+    - **Client Identity:** Generated `.exe` clients are cryptographically bound to the host.
+    - **Session Approval:** Manual admin approval required for new browser sessions.
 
-### Phase 1: UI & UX (✅ Completed)
-- [x] Dark Mode Theme
-- [x] Chat Interface with Code Highlighting
-- [x] Image Gen Interface with LoRA Stacking
-- [x] Global Settings Menu
-- [x] Navigation & View Switching
-- [x] Gallery with metadata display
+## 📂 Key Directory Structure
 
-### Phase 2: Backend Integration (✅ Completed)
-- [x] Ollama LLM integration
-- [x] Gemini API integration
-- [x] Native Diffusers image generation
-- [x] Multi-model family support (SD1.5, SDXL, Pony, Flux)
-- [x] ZLUDA/AMD GPU optimization
-- [x] Custom VAE/LoRA/Text Encoder loading
-- [x] GGUF quantized model support
+```
+AI_GUI/
+├── main.py                 # Application Entry Point
+├── main_window.py          # Core Orchestration Logic
+├── database.py             # SQLite Storage for Chats/Settings
+├── config.json             # User Preferences
+├── backend/                # Heavy Lifting Workers
+│   ├── chat_worker.py      # LLM Inference Thread
+│   ├── image_worker.py     # Diffusion Generation Thread
+│   ├── search_service.py   # Web Search Interface
+│   └── image_generator.py  # Diffusers Pipeline Manager
+├── VoxAI_Chat_API/         # Local LLM Engine
+│   ├── vox_api.py          # Llama.cpp Wrapper
+│   ├── machine_engine...   # Hardware Detection Logic
+│   └── models/             # GGUF Model Storage
+├── Vox_IronGate/           # Remote Access System
+│   ├── iron_host.py        # Tunnel Host
+│   ├── iron_desktop.py     # Local Search API
+│   └── security.py         # Auth & Encryption
+├── widgets/                # UI Components
+│   ├── chat_view.py        # Chat Tab
+│   ├── image_gen_view.py   # Image Gen Tab
+│   ├── code_panel.py       # Syntax Highlighting
+│   └── ...
+└── outputs/                # Generated Content
+```
 
-### Phase 3: Advanced Features (🚧 In Progress)
-- [x] GGUF Flux transformer support (low VRAM)
-- [x] Automatic dtype handling (bfloat16/float16)
-- [ ] ControlNet support
-- [ ] Inpainting/Outpainting
-- [ ] Batch generation
-- [ ] Prompt queue system
+## 🛠️ Development Practices
 
-### Phase 4: Future Enhancements
-- [ ] Remote Server Mode (network control)
-- [ ] Voice Mode (STT/TTS)
-- [ ] Video generation support
-- [ ] Plugin system for custom nodes
+- **Qt Main Thread Safety:** All heavy computation (Checking models, generation, networking) MUST happen in `QThread` workers. Never block `main_window.py`.
+- **Config persistence:** All user settings are saved immediately to `config.json`.
+- **Error Handling:** Workers emit `error` signals which are caught by the UI to display toast notifications, preventing crashes.

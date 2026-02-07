@@ -26,6 +26,7 @@ tmp/
 # ===========================
 VoxAI_Chat_API/models/
 VoxAI_Chat_API/data/
+data/
 VoxAI_Chat_API/__pycache__/
 VoxAI_Chat_API/elastic_memory/__pycache__/
 Vox_IronGate/exports/
