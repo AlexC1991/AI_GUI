@@ -177,6 +177,8 @@ AI_GUI/
 
 ### Flux on 8GB VRAM — Budget-Friendly Setup
 
+> ⚠️ **Work in Progress:** Flux GGUF support is experimental and may not work on all systems yet.
+
 Flux normally requires 24GB+ VRAM, but with GGUF quantization you can run it on 8GB:
 
 1. **Download the GGUF model:**
@@ -187,6 +189,8 @@ Flux normally requires 24GB+ VRAM, but with GGUF quantization you can run it on 
    - [clip_l.safetensors](https://huggingface.co/comfyanonymous/flux_text_encoders) → `models/text_encoders/`
 
 3. **Select in the app:** Choose the Flux model from the Image Generation tab
+
+**Alternative:** Use SD 1.5 or SDXL which work reliably on 8GB VRAM.
 
 ---
 
