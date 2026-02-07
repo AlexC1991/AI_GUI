@@ -39,6 +39,10 @@ VoxAI isn't just another AI GUI—it's an **agentic framework** that gives local
 
 > *"I gave Qwen3-8B internet access and it achieved metacognition"* — Creator
 
+![Agentic Search Demo](screenshots/agentic_search_demo.png)
+
+---
+
 ---
 
 ## 🚀 Features
