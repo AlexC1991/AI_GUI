@@ -29,12 +29,13 @@ class ChatWorker(QThread):
         self.system_prompt = None
         self._provider = None
 
-    def setup(self, provider_type, model_name, api_key, prompt, history, system_prompt=None):
+    def setup(self, provider_type, model_name, api_key, prompt, history, system_prompt=None, session_id=None):
         self.provider_type = provider_type
         self.model_name = model_name
         self.api_key = api_key
         self.prompt = prompt
         self.history = history
+        self.session_id = session_id
         
         # Enforce Code Protocol
         protocol = (
@@ -61,6 +62,14 @@ class ChatWorker(QThread):
             elif self.provider_type == "VoxAI" or self.provider_type == "Ollama": # Backwards compat
                 print(f"[DEBUG] Initializing VoxAI Provider with model: {self.model_name}")
                 self._provider = VoxProvider(model_name=self.model_name)
+                # Pass "remember this" priority flag if set
+                if getattr(self, '_pending_priority', False):
+                    self._provider.set_pending_priority()
+                
+                # Elastic Memory: Set Session ID
+                if self.session_id and hasattr(self._provider, 'set_session'):
+                    print(f"[ChatWorker] Setting session: {self.session_id}")
+                    self._provider.set_session(self.session_id)
             else:
                 self.error.emit(f"Unknown provider: {self.provider_type}")
                 return

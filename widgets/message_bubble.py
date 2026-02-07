@@ -424,6 +424,10 @@ class ThinkingSection(QWidget):
         cursor.movePosition(QTextCursor.End)
         self.text_display.setTextCursor(cursor)
 
+    def toPlainText(self):
+        """Return the raw thinking text."""
+        return self._thinking_text
+
     def finalize(self):
         """Called when thinking is done. Stops animation, shrinks to summary."""
         self._finalized = True

@@ -95,6 +95,11 @@ class MainWindow(QMainWindow):
 
         # Initial Model Check
         self._init_ollama_watcher()
+        
+        # Session Management (Elastic Memory)
+        import time
+        self.current_session_id = f"session_{int(time.time())}"
+        print(f"[MainWindow] Persistent Session ID: {self.current_session_id}")
 
         # Auto-start Iron Desktop Service (local search/upload API on port 8001)
         self._start_desktop_service()
@@ -429,10 +434,71 @@ class MainWindow(QMainWindow):
 
         return None
 
+    def _ai_doesnt_know(self, response_text):
+        """Check if the AI's response indicates it doesn't know the answer
+        and would benefit from a web search."""
+        lower = response_text.lower()
+
+        # Phrases that indicate the AI can't answer / doesn't have the info
+        cant_help = [
+            "i don't have access to real-time",
+            "i don't have real-time",
+            "i can't provide specific information",
+            "i can't provide current",
+            "i can't provide up-to-date",
+            "i don't have current information",
+            "i don't have up-to-date",
+            "i don't have the latest",
+            "i cannot provide real-time",
+            "i cannot browse the internet",
+            "i can't browse the internet",
+            "i can't search the web",
+            "i cannot search the web",
+            "i don't have access to the internet",
+            "i'm unable to provide",
+            "my knowledge is limited to",
+            "my training data",
+            "my knowledge cutoff",
+            "my information may be outdated",
+            "i'm not able to access",
+            "i do not have the ability to",
+            "as an ai, i don't have",
+            "as an ai, i can't",
+            "as an artificial intelligence",
+            "i lack the ability to",
+            "i cannot access external",
+            "i don't have access to external",
+            "beyond my knowledge",
+            "outside of my training",
+            "i recommend checking",
+            "i suggest visiting",
+            "please check online",
+            "you may want to check",
+            "you could try searching",
+            "for the most accurate information",
+            "for the latest information",
+            "for up-to-date information",
+            "i'd recommend visiting",
+        ]
+
+        for phrase in cant_help:
+            if phrase in lower:
+                return True
+
+        return False
+
     def handle_send(self):
         user_text = self.input_bar.input.toPlainText().strip()
         if not user_text:
             return
+
+        # Check for /remember command — flag for priority storage
+        self._remember_this = False
+        if user_text.lower().startswith("/remember "):
+            self._remember_this = True
+            user_text = user_text[10:].strip()  # Strip the /remember prefix
+        elif "remember this:" in user_text.lower():
+            self._remember_this = True
 
         # Add User Message
         self.chat_view.chat_display.add_message(user_text, "user")
@@ -441,33 +507,46 @@ class MainWindow(QMainWindow):
         # Clear speed stats from previous response
         self.input_bar.clear_speed()
 
-        # Check for web search intent
+        # Check for explicit web search intent ("search for X", "look up X")
         search_query = self._detect_search_intent(user_text)
         prompt_text = user_text
 
         if search_query:
             try:
                 print(f"[Search] Searching for: {search_query}")
-                self.chat_view.chat_display.add_message(f"Searching the web for: *{search_query}*...", "ai")
+                self.sidebar.update_status("searching")
+                
+                # Show temporary thinking bubble
+                search_bubble = self.chat_view.chat_display.show_thinking()
+                
                 results = self.search_service.search(search_query, max_results=5)
+                
+                # Remove bubble
+                self.chat_view.chat_display.remove_bubble(search_bubble)
+                
                 if results:
-                    # Show search results in chat
-                    result_lines = [f"**Web Search Results for: '{search_query}'**\n"]
-                    for i, r in enumerate(results, 1):
-                        result_lines.append(f"{i}. **{r['title']}**")
-                        result_lines.append(f"   {r['snippet']}")
-                        result_lines.append(f"   *{r['url']}*\n")
-                    search_display = "\n".join(result_lines)
-                    self.chat_view.chat_display.add_message(search_display, "ai")
-
-                    # Inject results into AI prompt
+                    # Inject results into AI prompt SILENTLY (No chat output)
+                    import datetime
+                    current_date_str = datetime.datetime.now().strftime("%A, %B %d, %Y")
+                    
                     search_context = self.search_service.format_for_ai(results, search_query)
-                    prompt_text = user_text + "\n" + search_context
+                    
+                    # Force date context + results
+                    prompt_text = (
+                        f"[Current Date: {current_date_str}]\n"
+                        f"User Question: {user_text}\n\n"
+                        f"{search_context}"
+                    )
+                    print(f"[Search] Injected {len(results)} results into prompt.")
                 else:
-                    self.chat_view.chat_display.add_message("[Search] No results found.", "ai")
+                    print("[Search] No results found.")
             except Exception as e:
                 print(f"[Search] Error: {e}")
-                self.chat_view.chat_display.add_message(f"[Search Error] {e}", "ai")
+                self.sidebar.update_status("error")
+
+        # Store original user text for potential auto-search retry
+        self._last_user_text = user_text
+        self._search_already_done = search_query is not None
 
         # Check backend
         if not hasattr(self, 'chat_worker'):
@@ -504,6 +583,7 @@ class MainWindow(QMainWindow):
         self._thinking_buffer = ""
         self._thinking_section = None
         self._chat_streaming_started = False
+        self._refusal_check_buffer = "" # Buffer for catching "I don't know" early
         self._chat_finished_guard = False
 
         # Add the Thinking Bubble
@@ -525,6 +605,27 @@ class MainWindow(QMainWindow):
         }
         api_model = model_map.get(model, model)
 
+        # FORCE TOOL USE: Append instruction to the prompt content (User Message)
+        # This helps reasoning models that might ignore the system prompt.
+        prompt_text += "\n\n(Remember: You have internet access. If you need to search, use [SEARCH: query])"
+
+        # Flag priority ("remember this") if detected
+        if hasattr(self, '_remember_this') and self._remember_this:
+            self.chat_worker._pending_priority = True
+        else:
+            self.chat_worker._pending_priority = False
+
+        # Construct System Prompt with Date (More Authoritative)
+        import datetime
+        current_date = datetime.datetime.now().strftime("%A, %B %d, %Y")
+        system_instructions = (
+            f"SYSTEM: The Current Date is strictly {current_date}.\n"
+            "You are VoxAI, a helpful and intelligent assistant.\n"
+            "Always use the Current Date as your temporal anchor for 'today', 'yesterday', or 'tomorrow'.\n"
+            "Do not hallucinate past dates as current.\n"
+            "You have internet access to search for current information when needed."
+        )
+
         # Start Worker
         self.chat_worker.setup(
             provider_type=provider_type,
@@ -532,15 +633,55 @@ class MainWindow(QMainWindow):
             api_key=api_key,
             prompt=prompt_text,
             history=self.chat_view.chat_display.get_history()[:-1],
-            system_prompt=None
+            system_prompt=system_instructions,
+            session_id=self.current_session_id
         )
         self.chat_worker.start()
+
+    def _is_thinking_uncertain(self, text):
+        """Check if the thinking block indicates uncertainty or a need to search."""
+        triggers = [
+            "i don't know",
+            "i'm not sure",
+            "i am not sure",
+            "uncertain",
+            "no information",
+            "lack of information",
+            "search for",
+            "check online",
+            "google it",
+            "verify",
+            "speculate",
+            "guess",
+            "unsure",
+            "i need to check",
+            "let me check",
+            "maybe i can find",
+        ]
+        lower_text = text.lower()
+        for t in triggers:
+            if t in lower_text:
+                return True
+        return False
 
     def _on_chat_chunk(self, chunk):
         # Remove thinking bubble (dots) on first chunk
         if hasattr(self, 'thinking_bubble') and self.thinking_bubble:
             self.chat_view.chat_display.remove_bubble(self.thinking_bubble)
             self.thinking_bubble = None
+
+        # --- Command Detection ([SEARCH: query]) ---
+        # Only trigger on INTENTIONAL search commands, not when the AI is discussing the tool.
+        check_text = self._refusal_check_buffer + chunk
+        # Keep buffer small but enough for failsafe detection
+        if len(check_text) > 200:
+             check_text = check_text[-200:]
+        self._refusal_check_buffer = check_text
+
+        # NOTE: [SEARCH:] command detection DISABLED
+        # The AI kept mentioning [SEARCH:] in its thinking when discussing the tool,
+        # which triggered false positives even with negation detection.
+        # Now relying ONLY on the failsafe (catches explicit refusals in thinking blocks).
 
         # --- Thinking model detection (<think>...</think>) ---
         text = self._thinking_buffer + chunk
@@ -573,6 +714,45 @@ class MainWindow(QMainWindow):
 
                     if text and self._thinking_section:
                         self._thinking_section.append_text(text)
+                        
+                        # NOTE: [SEARCH:] detection in thinking blocks DISABLED
+                        # AI mentions [SEARCH:] when discussing whether to use the tool,
+                        # causing false positives. Relying only on failsafe below.
+
+                        # --- THINKING MODEL FAILSAFE ---
+                        # If the AI says it CAN'T access real-time data in its thinking,
+                        # we intercept and trigger search BEFORE the visible response.
+                        # This only affects thinking models (non-thinking models don't use <think>).
+                        # IMPORTANT: Only use EXPLICIT refusal phrases, not casual mentions!
+                        lower_thinking = text.lower()
+                        realtime_failsafe_triggers = [
+                            "i don't have real-time access",
+                            "i can't access real-time data",
+                            "i cannot access real-time data",
+                            "i don't have access to real-time",
+                            "unable to access current information",
+                            "cannot provide real-time information"
+                        ]
+                        
+                        # Only trigger if NOT already searched and we have a user query
+                        if not getattr(self, '_search_already_done', False):
+                            for failsafe in realtime_failsafe_triggers:
+                                if failsafe in lower_thinking:
+                                    user_query = getattr(self, '_last_user_text', '')
+                                    if user_query:
+                                        print(f"[AutoSearch] Failsafe triggered in thoughts: '{failsafe}'")
+                                        print(f"[AutoSearch] Searching for user query: '{user_query}'")
+                                        
+                                        self._chat_finished_guard = True 
+                                        if hasattr(self, 'chat_worker') and self.chat_worker.isRunning():
+                                            self.chat_worker.terminate()
+                                            self.chat_worker.wait()
+                                            
+                                        self._in_thinking = False
+                                        self._thinking_section = None
+                                        self._perform_auto_search(user_query)
+                                        return
+
                     return
             else:
                 # Look for <think> opening tag
@@ -591,6 +771,9 @@ class MainWindow(QMainWindow):
                     self._thinking_section = self.chat_view.chat_display.start_thinking_section()
                     self.sidebar.update_status("reasoning")
 
+                    # NOTE: Seed thought injection removed - it was self-triggering intent detection.
+                    # The AI knows about [SEARCH: query] from the system prompt.
+
                     text = text[start_idx + len("<think>"):]
                     continue
                 else:
@@ -608,6 +791,115 @@ class MainWindow(QMainWindow):
                             self._chat_streaming_started = True
                         self.chat_view.chat_display.update_streaming_message(text)
                     return
+
+    def _perform_auto_search(self, user_query):
+        """Execute auto-search logic: stop current stream, search, and restart chat."""
+        print(f"[AutoSearch] Initiating search for: {user_query}")
+        
+        # COMPREHENSIVE CLEANUP: Remove ALL leftover UI elements
+        # 1. Remove thinking section if exists
+        if self._thinking_section:
+            try:
+                self.chat_view.chat_display.remove_bubble(self._thinking_section)
+            except Exception as e:
+                print(f"[AutoSearch] Failed to remove thinking section: {e}")
+            self._thinking_section = None
+            self._in_thinking = False
+        
+        # 2. Remove partial streaming message if exists
+        if getattr(self, '_chat_streaming_started', False):
+            try:
+                # End streaming gracefully (clears internal state)
+                self.chat_view.chat_display.end_streaming_message()
+                # Remove the last message (which was partial)
+                self.chat_view.chat_display.remove_last_message()
+            except Exception as e:
+                print(f"[AutoSearch] Failed to remove streaming message: {e}")
+            self._chat_streaming_started = False
+        
+        # 3. Remove thinking bubble (dots) if exists
+        if getattr(self, 'thinking_bubble', None):
+            try:
+                self.chat_view.chat_display.remove_bubble(self.thinking_bubble)
+            except Exception as e:
+                print(f"[AutoSearch] Failed to remove thinking bubble: {e}")
+            self.thinking_bubble = None
+        
+        # Stop current worker if running
+        if hasattr(self, 'chat_worker') and self.chat_worker.isRunning():
+            self._chat_finished_guard = True # Prevent normal finish logic
+            self.chat_worker.terminate()
+            self.chat_worker.wait()
+        
+        try:
+            # Show search status subtly
+            self.sidebar.update_status("searching")
+            
+            # Show temporary thinking bubble for search
+            self.thinking_bubble = self.chat_view.chat_display.show_thinking()
+            self.chat_view.chat_display.scroll_to_bottom()
+
+            results = self.search_service.search(user_query, max_results=5)
+            if results:
+                # Remove bubble before restarting chat
+                if self.thinking_bubble:
+                    self.chat_view.chat_display.remove_bubble(self.thinking_bubble)
+                    self.thinking_bubble = None
+
+                # Re-ask with search context
+                import datetime
+                current_date_str = datetime.datetime.now().strftime("%A, %B %d, %Y")
+                
+                search_context = self.search_service.format_for_ai(results, user_query)
+                
+                # Force date context + search results
+                prompt_with_search = (
+                    f"[Current Date: {current_date_str}]\n"
+                    f"User Question: {user_query}\n\n"
+                    f"{search_context}"
+                )
+
+                # Flag retry so we don't loop
+                self._search_retry_active = True
+                self._search_already_done = True
+
+                # Reset streaming state
+                self._in_thinking = False
+                self._thinking_buffer = ""
+                self._thinking_section = None
+                self._chat_streaming_started = False
+                self._chat_finished_guard = False
+                self._refusal_check_buffer = ""
+
+                # Show thinking bubble for new response
+                self.thinking_bubble = self.chat_view.chat_display.show_thinking()
+                self.chat_view.chat_display.scroll_to_bottom()
+                self.sidebar.update_status("thinking")
+
+                # Re-construct system prompt
+                import datetime
+                current_date = datetime.datetime.now().strftime("%A, %B %d, %Y")
+                system_instructions = (
+                    f"SYSTEM: The Current Date is strictly {current_date}.\n"
+                    "You are VoxAI, a helpful and intelligent assistant.\n"
+                    "Always use the Current Date as your temporal anchor for 'today', 'yesterday', or 'tomorrow'.\n"
+                    "Do not hallucinate past dates as current."
+                )
+
+                # Re-send to AI with search results
+                self.chat_worker.setup(
+                    provider_type=self.chat_worker.provider_type,
+                    model_name=self.chat_worker.model_name,
+                    api_key=self.chat_worker.api_key,
+                    prompt=prompt_with_search,
+                    history=self.chat_view.chat_display.get_history()[:-1],
+                    system_prompt=system_instructions,
+                    session_id=self.current_session_id
+                )
+                self.chat_worker.start()
+        except Exception as e:
+            print(f"[AutoSearch] Error: {e}")
+            self.sidebar.update_status("error")
 
     def _on_chat_finished(self):
         import re
@@ -628,9 +920,110 @@ class MainWindow(QMainWindow):
             self._in_thinking = False
             self._thinking_section = None
 
+    def _perform_auto_search(self, user_query):
+        """Execute auto-search logic: stop current stream, search, and restart chat."""
+        
+        # Stop current worker if running
+        if hasattr(self, 'chat_worker') and self.chat_worker.isRunning():
+            self._chat_finished_guard = True # Prevent normal finish logic
+            self.chat_worker.terminate()
+            self.chat_worker.wait()
+        
+        try:
+            # Show search status subtly
+            print(f"[AutoSearch] Searching for: {user_query}")
+            self.sidebar.update_status("searching")
+            
+            # Show temporary thinking bubble if not already there
+            if not getattr(self, 'thinking_bubble', None):
+               self.thinking_bubble = self.chat_view.chat_display.show_thinking()
+               self.chat_view.chat_display.scroll_to_bottom()
+
+            results = self.search_service.search(user_query, max_results=5)
+            if results:
+                # Remove bubble before restarting chat
+                if self.thinking_bubble:
+                    self.chat_view.chat_display.remove_bubble(self.thinking_bubble)
+                    self.thinking_bubble = None
+
+                # Re-ask with search context
+                import datetime
+                current_date_str = datetime.datetime.now().strftime("%A, %B %d, %Y")
+                
+                search_context = self.search_service.format_for_ai(results, user_query)
+                
+                # Force date context + search results
+                prompt_with_search = (
+                    f"[Current Date: {current_date_str}]\n"
+                    f"User Question: {user_query}\n\n"
+                    f"{search_context}"
+                )
+
+                # Flag retry so we don't loop
+                self._search_retry_active = True
+                self._search_already_done = True
+
+                # Reset streaming state
+                self._in_thinking = False
+                self._thinking_buffer = ""
+                self._thinking_section = None
+                self._chat_streaming_started = False
+                self._chat_finished_guard = False
+                self._refusal_check_buffer = ""
+
+                # Show thinking bubble for new response
+                self.thinking_bubble = self.chat_view.chat_display.show_thinking()
+                self.chat_view.chat_display.scroll_to_bottom()
+                self.sidebar.update_status("thinking")
+
+                # SYSTEM PROMPT [Round 3 Style]
+                import datetime
+                current_date = datetime.datetime.now().strftime("%A, %B %d, %Y")
+                system_instructions = (
+                    f"SYSTEM: The Current Date is strictly {current_date}.\n"
+                    "You are VoxAI, a helpful and intelligent assistant.\n"
+                    "Always use the Current Date as your temporal anchor for 'today', 'yesterday', or 'tomorrow'."
+                )
+
+                # Re-send to AI with search results
+                self.chat_worker.setup(
+                    provider_type=self.chat_worker.provider_type,
+                    model_name=self.chat_worker.model_name,
+                    api_key=self.chat_worker.api_key,
+                    prompt=prompt_with_search,
+                    history=self.chat_view.chat_display.get_history()[:-1],
+                    system_prompt=system_instructions,
+                    session_id=self.current_session_id
+                )
+                self.chat_worker.start()
+        except Exception as e:
+            print(f"[AutoSearch] Error: {e}")
+            self.sidebar.update_status("error")
+
         # Only end streaming if we started a chat bubble
         if getattr(self, '_chat_streaming_started', False):
             self.chat_view.chat_display.end_streaming_message()
+
+        # --- AUTO-SEARCH RETRY: If the AI said "I don't know", search and re-ask ---
+        # --- AUTO-SEARCH RETRY: If the AI said "I don't know", search and re-ask ---
+        if not getattr(self, '_search_already_done', False) and not getattr(self, '_search_retry_active', False):
+            history = self.chat_view.chat_display.get_history()
+            if history and history[-1]['role'] == 'assistant':
+                ai_response = history[-1]['content']
+                user_query = getattr(self, '_last_user_text', '')
+                
+                if user_query and self._ai_doesnt_know(ai_response):
+                    print(f"[AutoSearch] AI doesn't know — searching for: {user_query}")
+                    
+                    # Remove the "I don't know" response
+                    self.chat_view.chat_display.remove_last_message()
+                    
+                    # Call shared search method
+                    self._perform_auto_search(user_query)
+                    return # Exit — the retry will call _on_chat_finished again when done
+
+        # Clear retry flag
+        self._search_retry_active = False
         self.sidebar.update_status("idle")
 
         # --- POST-MESSAGE CODE EXTRACTION ---
@@ -822,17 +1215,6 @@ class MainWindow(QMainWindow):
         if "Llama" in model or "Mistral" in model or "Gemma" in model or "qwen" in model.lower():
             provider_type = "Ollama"
 
-        api_key = llm_cfg.get("api_key", "")
-
-        self.sidebar.update_status("thinking")
-        self._in_thinking = False
-        self._thinking_buffer = ""
-        self._thinking_section = None
-        self._chat_streaming_started = False
-        self._chat_finished_guard = False
-
-        self.thinking_bubble = self.chat_view.chat_display.show_thinking()
-        self.chat_view.chat_display.scroll_to_bottom()
 
         model_map = {
             "Gemini Pro": "gemini-1.5-pro",
@@ -857,13 +1239,26 @@ class MainWindow(QMainWindow):
         else:
             return
 
+        api_key = llm_cfg.get("api_key", "")
+        
+        # System Prompt for file context
+        import datetime
+        current_date = datetime.datetime.now().strftime("%A, %B %d, %Y")
+        system_instructions = (
+            f"SYSTEM: The Current Date is strictly {current_date}.\n"
+            "You are VoxAI, a helpful and intelligent assistant.\n"
+            "Always use the Current Date as your temporal anchor.\n"
+            "TOOLS AVAILABLE:\n"
+            "- Internet Search: If you need real-time information, output `[SEARCH: your query]` on a new line."
+        )
+
         self.chat_worker.setup(
             provider_type=provider_type,
             model_name=api_model,
             api_key=api_key,
             prompt=prompt,
             history=prev_history,
-            system_prompt=None
+            system_prompt=system_instructions
         )
         self.chat_worker.start()
 
@@ -902,3 +1297,85 @@ class MainWindow(QMainWindow):
             self.ollama_list_worker.wait(1000)
 
         super().closeEvent(event)
+
+    def _perform_auto_search(self, user_query):
+        """Execute auto-search logic: stop current stream, search, and restart chat."""
+        
+        # Stop current worker if running
+        if hasattr(self, 'chat_worker') and self.chat_worker.isRunning():
+            self._chat_finished_guard = True # Prevent normal finish logic
+            self.chat_worker.terminate()
+            self.chat_worker.wait()
+        
+        try:
+            # Show search status subtly
+            print(f"[AutoSearch] Searching for: {user_query}")
+            self.sidebar.update_status("searching")
+            
+            # Show temporary thinking bubble if not already there
+            if not getattr(self, 'thinking_bubble', None):
+               self.thinking_bubble = self.chat_view.chat_display.show_thinking()
+               self.chat_view.chat_display.scroll_to_bottom()
+
+            results = self.search_service.search(user_query, max_results=5)
+            if results:
+                # Remove bubble before restarting chat
+                if self.thinking_bubble:
+                    self.chat_view.chat_display.remove_bubble(self.thinking_bubble)
+                    self.thinking_bubble = None
+
+                # Re-ask with search context
+                import datetime
+                current_date_str = datetime.datetime.now().strftime("%A, %B %d, %Y")
+                
+                search_context = self.search_service.format_for_ai(results, user_query)
+                
+                # Force date context + search results
+                prompt_with_search = (
+                    f"User Question: {user_query}\n\n"
+                    f"{search_context}"
+                )
+
+                # Flag retry so we don't loop
+                self._search_retry_active = True
+                self._search_already_done = True
+
+                # Reset streaming state
+                self._in_thinking = False
+                self._thinking_buffer = ""
+                self._thinking_section = None
+                self._chat_streaming_started = False
+                self._chat_finished_guard = False
+                self._refusal_check_buffer = ""
+
+                # Show thinking bubble for new response
+                self.thinking_bubble = self.chat_view.chat_display.show_thinking()
+                self.chat_view.chat_display.scroll_to_bottom()
+                self.sidebar.update_status("thinking")
+
+                # SYSTEM PROMPT [Round 3 Style]
+                import datetime
+                current_date = datetime.datetime.now().strftime("%A, %B %d, %Y")
+                
+                # Manual System Prompt construction since we are bypassing main flow
+                # To be safe, we just pass the critical date info and identity
+                system_instructions = (
+                    f"SYSTEM: The Current Date is strictly {current_date}.\n"
+                    "You are VoxAI, a helpful and intelligent assistant.\n"
+                    "Always use the Current Date as your temporal anchor for 'today', 'yesterday', or 'tomorrow'."
+                )
+
+                # Re-send to AI with search results
+                self.chat_worker.setup(
+                    provider_type=self.chat_worker.provider_type,
+                    model_name=self.chat_worker.model_name,
+                    api_key=self.chat_worker.api_key,
+                    prompt=prompt_with_search,
+                    history=self.chat_view.chat_display.get_history()[:-1],
+                    system_prompt=system_instructions,
+                    session_id=self.current_session_id
+                )
+                self.chat_worker.start()
+        except Exception as e:
+            print(f"[AutoSearch] Error: {e}")
+            self.sidebar.update_status("error")

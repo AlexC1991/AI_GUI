@@ -91,26 +91,112 @@ class VoxAPI:
         
         if model_path is None:
             model_path = self._auto_find_model()
-            
+
         if not os.path.exists(model_path):
             raise FileNotFoundError(f"Model not found at: {model_path}")
-            
+
         self.model_name = os.path.basename(model_path)
         self.model_path = model_path
-        
+
         # Detect chat format from model name
         self._setup_chat_format()
-        
+
+        # === Elastic Memory: Dynamic n_ctx ===
+        self._computed_n_ctx = 2048  # Safe default
+        self._elastic_enabled = False
+        self.context_manager = None
+        self._model_info = None
+        self._resource_monitor = None
+        self._pending_priority = False
+        self._current_user_message = None
+
+        try:
+            from elastic_memory.model_analyzer import ModelAnalyzer
+            from elastic_memory.resource_monitor import ResourceMonitor
+
+            self._model_info = ModelAnalyzer.analyze(self.model_path)
+            self._resource_monitor = ResourceMonitor(
+                model_params_b=self._model_info.get("param_count_b", 7),
+                gpu_name=self.config.get("gpu_name", ""),
+                vram_total_mb=self.config.get("vram_total_mb", 0),
+                vram_free_mb=self.config.get("vram_free_mb", 0),
+            )
+            kv_per_token = ModelAnalyzer.estimate_kv_bytes_per_token(
+                self._model_info.get("n_layers", 32),
+                self._model_info.get("d_model", 4096),
+            )
+            self._computed_n_ctx = self._resource_monitor.compute_safe_n_ctx(
+                self._model_info["file_size_bytes"], kv_per_token
+            )
+            print(f"[VOX API] Elastic Memory: n_ctx = {self._computed_n_ctx} "
+                  f"(model ~{self._model_info['param_count_b']}B, "
+                  f"{self._model_info['n_layers']}L, "
+                  f"VRAM ceiling {self._resource_monitor.get_vram_ceiling_pct():.0%})")
+        except Exception as e:
+            print(f"[VOX API] Elastic Memory n_ctx detection failed: {e}")
+            print(f"[VOX API] Using fallback n_ctx = {self._computed_n_ctx}")
+
         if self.verbose:
             print(f"[VOX API] Loading: {self.model_name}")
             if self.template_handler:
                 print(f"[VOX API] Chat format: {self.template_handler.format.value}")
-        
+
+        # === Elastic Memory: Dynamic n_ctx ===
+        self._computed_n_ctx = 2048  # Safe default
+        self._elastic_enabled = False
+        self.context_manager = None
+        self._model_info = None
+        self._resource_monitor = None
+        self._pending_priority = False
+        self._current_user_message = None
+
+        try:
+            from elastic_memory.model_analyzer import ModelAnalyzer
+            from elastic_memory.resource_monitor import ResourceMonitor
+
+            self._model_info = ModelAnalyzer.analyze(self.model_path)
+            self._resource_monitor = ResourceMonitor(
+                model_params_b=self._model_info.get("param_count_b", 7),
+                gpu_name=self.config.get("gpu_name", ""),
+                vram_total_mb=self.config.get("vram_total_mb", 0),
+                vram_free_mb=self.config.get("vram_free_mb", 0),
+            )
+            kv_per_token = ModelAnalyzer.estimate_kv_bytes_per_token(
+                self._model_info.get("n_layers", 32),
+                self._model_info.get("d_model", 4096),
+            )
+            self._computed_n_ctx = self._resource_monitor.compute_safe_n_ctx(
+                self._model_info["file_size_bytes"], kv_per_token
+            )
+            print(f"[VOX API] Elastic Memory: n_ctx = {self._computed_n_ctx} "
+                  f"(model ~{self._model_info['param_count_b']}B, "
+                  f"{self._model_info['n_layers']}L, "
+                  f"VRAM ceiling {self._resource_monitor.get_vram_ceiling_pct():.0%})")
+        except Exception as e:
+            print(f"[VOX API] Elastic Memory n_ctx detection failed: {e}")
+            print(f"[VOX API] Using fallback n_ctx = {self._computed_n_ctx}")
+
         self.llm = self._load_model_with_fallback()
-        
+
+        # === Elastic Memory: Context Manager ===
+        try:
+            from elastic_memory.context_manager import ContextManager
+            self.context_manager = ContextManager(
+                llm_instance=self.llm,
+                template_handler=self.template_handler,
+                n_ctx=self._computed_n_ctx,
+                max_gen_tokens=2048,
+            )
+            self._elastic_enabled = True
+            print(f"[VOX API] Elastic Memory: ACTIVE "
+                  f"(session={self.context_manager.session_id})")
+        except Exception as e:
+            print(f"[VOX API] Elastic Memory context manager failed: {e}")
+            print(f"[VOX API] Running in classic mode (no persistence/RAG)")
+
         self.warmup()
         self._schedule_idle_check()
-        
+
         if self.verbose:
             status = "CPU FALLBACK" if self.using_fallback else self.mode
             print(f"[VOX API] ✓ Ready: {status}")
@@ -153,7 +239,7 @@ class VoxAPI:
                 
                 llm = Llama(
                     model_path=self.model_path,
-                    n_ctx=2048,
+                    n_ctx=self._computed_n_ctx,
                     n_gpu_layers=config['n_gpu_layers'],
                     n_threads=config['n_threads'],
                     n_threads_batch=config['n_threads_batch'],
@@ -197,7 +283,7 @@ class VoxAPI:
             
             llm = Llama(
                 model_path=self.model_path,
-                n_ctx=2048,
+                n_ctx=min(self._computed_n_ctx, 4096),
                 n_gpu_layers=0,
                 n_threads=cpu_config['n_threads'],
                 n_threads_batch=cpu_config['n_threads_batch'],
@@ -341,28 +427,35 @@ class VoxAPI:
     # CHAT INTERFACE
     # ============================================
 
-    def chat(self, user_message: str, stream: bool = True, 
+    def chat(self, user_message: str, stream: bool = True,
              system_prompt: str = None) -> Union[str, Generator[str, None, None]]:
         """
         Send a message to the AI and get a response.
-        
+
         Args:
             user_message: The user's message
             stream: Whether to stream the response
             system_prompt: Optional system prompt override
-            
+
         Returns:
             String response if stream=False, Generator if stream=True
         """
         self._touch_activity()
-        
-        # Initialize history with system prompt if empty
-        if not self.history:
-            sys_msg = system_prompt or "You are a helpful assistant."
-            self.history.append({"role": "system", "content": sys_msg})
-            
-        self.history.append({"role": "user", "content": user_message})
-        
+        self._current_user_message = user_message
+
+        if self._elastic_enabled and self.context_manager:
+            # Elastic Memory: ContextManager builds optimal message list
+            sys_prompt = system_prompt or "You are a helpful assistant."
+            self.history = self.context_manager.prepare_context(
+                user_message, sys_prompt
+            )
+        else:
+            # Classic mode: unbounded history
+            if not self.history:
+                sys_msg = system_prompt or "You are a helpful assistant."
+                self.history.append({"role": "system", "content": sys_msg})
+            self.history.append({"role": "user", "content": user_message})
+
         if stream:
             return self._stream_response()
         else:
@@ -434,12 +527,26 @@ class VoxAPI:
                     break
                     
             self.history.append({"role": "assistant", "content": full_response})
-        
+
+            # Elastic Memory: persist + index + KV flush
+            if self._elastic_enabled and self.context_manager:
+                try:
+                    self.context_manager.post_turn(
+                        self._current_user_message or "",
+                        full_response,
+                        self.llm,
+                        priority=self._pending_priority,
+                    )
+                    self._pending_priority = False
+                except Exception as em_err:
+                    if self.verbose:
+                        print(f"[VOX API] Elastic Memory post-turn error: {em_err}")
+
         except Exception as e:
             if self.verbose:
                 print(f"[VOX API] Stream error: {e}")
             raise
-        
+
         finally:
             self._is_generating = False
             self._touch_activity()
@@ -472,11 +579,40 @@ class VoxAPI:
                     text = text[:-len(stop)].strip()
             
             self.history.append({"role": "assistant", "content": text})
+
+            # Elastic Memory: persist + index + KV flush
+            if self._elastic_enabled and self.context_manager:
+                try:
+                    self.context_manager.post_turn(
+                        self._current_user_message or "",
+                        text,
+                        self.llm,
+                        priority=self._pending_priority,
+                    )
+                    self._pending_priority = False
+                except Exception as em_err:
+                    if self.verbose:
+                        print(f"[VOX API] Elastic Memory post-turn error: {em_err}")
+
             return text
-        
+
         finally:
             self._is_generating = False
             self._touch_activity()
+
+    def mark_priority(self, message_index: int = -2):
+        """Mark a message as priority for future retrieval ('remember this')."""
+        if self._elastic_enabled and self.context_manager:
+            self.context_manager.memory_store.mark_priority(message_index)
+
+    def set_pending_priority(self):
+        """Flag the next turn's user message as priority."""
+        self._pending_priority = True
+
+    def set_session(self, session_id: str):
+        """Switch to a different conversation session."""
+        if self._elastic_enabled and self.context_manager:
+            self.context_manager.set_session(session_id)
 
     def clear_history(self):
         """Reset conversation context."""
@@ -492,8 +628,18 @@ class VoxAPI:
             "gpu_layers": self.config['n_gpu_layers'],
             "using_fallback": self.using_fallback,
             "idle_timeout": self.idle_timeout,
+            "n_ctx": self._computed_n_ctx,
+            "elastic_memory": self._elastic_enabled,
         }
-        
+
+        if self._elastic_enabled and self.context_manager:
+            stats["session_id"] = self.context_manager.session_id
+            stats["message_count"] = self.context_manager.memory_store.get_message_count()
+
+        if self._model_info:
+            stats["param_count_b"] = self._model_info.get("param_count_b")
+            stats["n_layers"] = self._model_info.get("n_layers")
+
         if self.template_handler:
             stats["chat_format"] = self.template_handler.format.value
         

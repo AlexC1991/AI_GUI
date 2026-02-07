@@ -104,17 +104,71 @@ def get_hardware_config():
     
     print(f"[HANDSHAKE] Detected GPU Class: {gpu_type}")
     
+    # =========================================================
+    # 5. VRAM / RAM DETECTION
+    # =========================================================
+    vram_total_mb = 0
+    vram_free_mb = 0
+    ram_free_mb = 0
+
+    try:
+        ram_info = psutil.virtual_memory()
+        ram_free_mb = ram_info.available // (1024 * 1024)
+        print(f"[HANDSHAKE] System RAM: {ram_info.total // (1024*1024)} MB total, {ram_free_mb} MB free")
+    except Exception:
+        ram_free_mb = 4096
+
+    if gpu_type == "DISCRETE_NVIDIA":
+        try:
+            vram_out = subprocess.check_output(
+                ["nvidia-smi", "--query-gpu=memory.total,memory.free",
+                 "--format=csv,nounits,noheader"],
+                timeout=5
+            ).decode().strip()
+            parts = vram_out.split(",")
+            if len(parts) >= 2:
+                vram_total_mb = int(parts[0].strip())
+                vram_free_mb = int(parts[1].strip())
+                print(f"[HANDSHAKE] NVIDIA VRAM: {vram_total_mb} MB total, {vram_free_mb} MB free")
+        except Exception as ve:
+            print(f"[HANDSHAKE] VRAM query failed: {ve}")
+    elif "AMD" in gpu_type:
+        # Estimate from known GPU models or use a safe default
+        # Map common substrings to VRAM amounts
+        amd_vram_map = {
+            "7900": 24576, "6950": 16384, "6900": 16384, "6800": 16384, "7800": 16384,
+            "6750": 12288, "6700": 12288, "7700": 12288,
+            "6650": 8192,  "6600": 8192,  "7600": 8192,  "5700": 8192,
+            "5600": 6144,  "580": 8192,   "590": 8192,   "570": 4096
+        }
+        
+        for key, mb in amd_vram_map.items():
+            if key in gpu_name:
+                vram_total_mb = mb
+                vram_free_mb = int(mb * 0.85) # Estimate 15% system overhead
+                print(f"[HANDSHAKE] AMD VRAM Estimate: {vram_total_mb} MB ({key} detected)")
+                break
+        
+        if vram_total_mb == 0:
+            vram_total_mb = 4096 # Safe conservative default
+            vram_free_mb = 3072
+            print(f"[HANDSHAKE] AMD VRAM Unknown - Using safe default: {vram_total_mb} MB")
+
     # Final Config Dictionary
     config = {
         "n_gpu_layers": layers,
-        "n_threads": optimal_threads, 
-        "n_threads_batch": optimal_batch_threads, 
+        "n_threads": optimal_threads,
+        "n_threads_batch": optimal_batch_threads,
         "n_batch": 512,
         "flash_attn": use_flash_attn,
         "use_mlock": True,     # Lock memory to prevent swapping
         "busy_wait": "1",      # Vulkan optimization
         "cache_type_k": "f16", # Save VRAM
-        "cache_type_v": "f16"  # Save VRAM
+        "cache_type_v": "f16", # Save VRAM
+        "gpu_name": gpu_name,
+        "vram_total_mb": vram_total_mb,
+        "vram_free_mb": vram_free_mb,
+        "ram_free_mb": ram_free_mb,
     }
 
     print(f"[HANDSHAKE] Final Mode Decision: {mode}")

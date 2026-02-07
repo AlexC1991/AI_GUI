@@ -290,6 +290,7 @@ class SettingsView(QScrollArea):
 
         # --- SECTIONS ---
         self.create_irongate_section()  # NEW - Vox IronGate
+        self.create_elastic_memory_section()
         self.create_llm_section()
         self.create_image_section()
         self.create_remote_section()
@@ -478,6 +479,139 @@ class SettingsView(QScrollArea):
 
     def on_gate_code(self, code):
         self.gate_code.setText(code)
+
+    def create_elastic_memory_section(self):
+        """Elastic Memory Architecture settings — VRAM/RAM/SSD tiered storage."""
+        group = QGroupBox("🧠 Elastic Memory (Context / RAG)")
+        group.setStyleSheet(group.styleSheet() + """
+            QGroupBox { border-color: #6B4C9A; }
+            QGroupBox::title { color: #9B7FCB; }
+        """)
+        layout = QVBoxLayout(group)
+        layout.setSpacing(12)
+        layout.setContentsMargins(20, 35, 20, 20)
+
+        # Status
+        self.elastic_status = QLabel("Status: Detecting...")
+        self.elastic_status.setStyleSheet("color: #9B7FCB; font-size: 13px;")
+        layout.addWidget(self.elastic_status)
+
+        # VRAM / RAM Info
+        info_row = QHBoxLayout()
+        self.vram_label = QLabel("VRAM: --")
+        self.vram_label.setStyleSheet("color: #aaa; font-size: 11px;")
+        self.ram_label = QLabel("RAM: --")
+        self.ram_label.setStyleSheet("color: #aaa; font-size: 11px;")
+        self.nctx_label = QLabel("Context Window: --")
+        self.nctx_label.setStyleSheet("color: #aaa; font-size: 11px;")
+        info_row.addWidget(self.vram_label)
+        info_row.addWidget(self.ram_label)
+        info_row.addWidget(self.nctx_label)
+        layout.addLayout(info_row)
+
+        # Data/Cache Drive
+        layout.addWidget(QLabel("Conversation Data Directory"))
+        data_row, self.elastic_data_dir = self.create_file_browser_row(
+            self._get_default_data_dir()
+        )
+        layout.addLayout(data_row)
+
+        sub = QLabel("Where conversation logs (msgpack) and vector indexes are stored.")
+        sub.setProperty("class", "sub-label")
+        sub.setStyleSheet("color: #888; font-size: 11px; font-weight: normal;")
+        layout.addWidget(sub)
+
+        # Drive space info
+        self.drive_space_label = QLabel("")
+        self.drive_space_label.setStyleSheet("color: #888; font-size: 11px;")
+        layout.addWidget(self.drive_space_label)
+        self._update_drive_space()
+
+        self.elastic_data_dir.textChanged.connect(self._update_drive_space)
+
+        # Session info
+        session_row = QHBoxLayout()
+        self.session_label = QLabel("Sessions: --")
+        self.session_label.setStyleSheet("color: #aaa; font-size: 11px;")
+        self.msg_count_label = QLabel("Messages: --")
+        self.msg_count_label.setStyleSheet("color: #aaa; font-size: 11px;")
+        session_row.addWidget(self.session_label)
+        session_row.addWidget(self.msg_count_label)
+        layout.addLayout(session_row)
+
+        # Refresh button
+        refresh_btn = QPushButton("Refresh Info")
+        refresh_btn.setCursor(Qt.PointingHandCursor)
+        refresh_btn.clicked.connect(self._refresh_elastic_info)
+        layout.addWidget(refresh_btn, 0, Qt.AlignLeft)
+
+        self.main_layout.addWidget(group)
+
+        # Initial info refresh
+        QTimer.singleShot(2000, self._refresh_elastic_info)
+
+    def _get_default_data_dir(self):
+        """Get the default elastic memory data directory."""
+        root = os.path.dirname(os.path.dirname(__file__))
+        return os.path.join(root, "VoxAI_Chat_API", "data", "conversations")
+
+    def _update_drive_space(self):
+        """Update drive space info for the selected data directory."""
+        import shutil
+        path = self.elastic_data_dir.text().strip()
+        if not path:
+            path = self._get_default_data_dir()
+        try:
+            # Get the drive root
+            drive = os.path.splitdrive(path)[0] or path
+            if os.path.exists(drive + os.sep):
+                usage = shutil.disk_usage(drive + os.sep)
+                free_gb = usage.free / (1024 ** 3)
+                total_gb = usage.total / (1024 ** 3)
+                used_pct = ((usage.total - usage.free) / usage.total) * 100
+                self.drive_space_label.setText(
+                    f"Drive {drive}: {free_gb:.1f} GB free / {total_gb:.1f} GB total ({used_pct:.0f}% used)"
+                )
+            else:
+                self.drive_space_label.setText(f"Drive not found: {drive}")
+        except Exception as e:
+            self.drive_space_label.setText(f"Could not read drive space: {e}")
+
+    def _refresh_elastic_info(self):
+        """Refresh elastic memory statistics."""
+        try:
+            import sys as _sys
+            vox_path = os.path.join(os.path.dirname(os.path.dirname(__file__)),
+                                     "VoxAI_Chat_API")
+            if vox_path not in _sys.path:
+                _sys.path.insert(0, vox_path)
+
+            from elastic_memory.memory_store import MemoryStore
+            from elastic_memory.resource_monitor import ResourceMonitor
+
+            # Session count
+            data_dir = self.elastic_data_dir.text().strip() or self._get_default_data_dir()
+            sessions = MemoryStore.list_sessions(data_dir)
+            self.session_label.setText(f"Sessions: {len(sessions)}")
+
+            # Message count from latest session
+            if sessions:
+                store = MemoryStore(session_id=sessions[0], data_dir=data_dir)
+                self.msg_count_label.setText(f"Messages (latest): {store.get_message_count()}")
+            else:
+                self.msg_count_label.setText("Messages: 0")
+
+            # Resource info
+            monitor = ResourceMonitor()
+            snap = monitor.snapshot()
+            self.vram_label.setText(f"VRAM: {snap['vram_total_mb']} MB ({snap['gpu_type']})")
+            self.ram_label.setText(f"RAM Free: {snap['ram_free_mb']} MB")
+            self.elastic_status.setText("Status: Active")
+            self.elastic_status.setStyleSheet("color: #4CAF50; font-size: 13px;")
+
+        except Exception as e:
+            self.elastic_status.setText(f"Status: {e}")
+            self.elastic_status.setStyleSheet("color: #FF5722; font-size: 13px;")
 
     def create_llm_section(self):
         group = QGroupBox("LLM Configuration (Local & Provider)")

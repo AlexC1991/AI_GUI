@@ -25,7 +25,9 @@ tmp/
 # Subproject Runtime/Data
 # ===========================
 VoxAI_Chat_API/models/
+VoxAI_Chat_API/data/
 VoxAI_Chat_API/__pycache__/
+VoxAI_Chat_API/elastic_memory/__pycache__/
 Vox_IronGate/exports/
 Vox_IronGate/uploads/
 Vox_IronGate/uploads_desktop/

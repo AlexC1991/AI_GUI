@@ -78,6 +78,17 @@ class ChatDisplay(QScrollArea):
         self.layout.removeWidget(bubble_widget)
         bubble_widget.deleteLater()
 
+    def remove_last_message(self):
+        """Remove the last message bubble and its history entry."""
+        if self.messages:
+            self.messages.pop()
+        count = self.layout.count()
+        if count > 0:
+            item = self.layout.takeAt(count - 1)
+            widget = item.widget()
+            if widget:
+                widget.deleteLater()
+
     def start_streaming_message(self):
         """Creates a new empty bubble for the AI response."""
         # Add placeholder to history

@@ -133,20 +133,24 @@ def set_model(model_filename):
         return False
 
 
-def ask_the_brain(user_message, max_tokens=500, temperature=0.7):
+def ask_the_brain(user_message, max_tokens=500, temperature=0.7, session_id=None):
     """Send message to VoxAI and return complete response (non-streaming)."""
     engine = _get_engine()
     if engine is None:
         return "[System] VoxAI Engine not available. No .gguf models found in VoxAI_Chat_API/models/"
 
     try:
+        # Elastic Memory Session Support
+        if session_id and hasattr(engine, 'set_session'):
+            engine.set_session(session_id)
+            
         response = engine.chat(user_message, stream=False)
         return response.strip() if response else "[System] Empty response from AI."
     except Exception as e:
         return f"[System] AI Error: {e}"
 
 
-def stream_the_brain(user_message, max_tokens=500, temperature=0.7):
+def stream_the_brain(user_message, max_tokens=500, temperature=0.7, session_id=None):
     """Stream response from VoxAI, yielding chunks with performance stats.
 
     Yields dicts: {"type": "chunk", "text": "..."} for content,
@@ -158,6 +162,10 @@ def stream_the_brain(user_message, max_tokens=500, temperature=0.7):
         return
 
     try:
+        # Elastic Memory Session Support
+        if session_id and hasattr(engine, 'set_session'):
+            engine.set_session(session_id)
+
         token_count = 0
         start_time = time.perf_counter()
 

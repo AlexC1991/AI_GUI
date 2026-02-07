@@ -189,16 +189,43 @@ class VoxProvider(BaseProvider):
         """Get the current provider status."""
         return self.status
 
+    def mark_priority(self, message_index: int = -2):
+        """Mark a message as priority ('remember this')."""
+        if self.engine:
+            self.engine.mark_priority(message_index)
+
+    def set_pending_priority(self):
+        """Flag the next turn's user message as priority."""
+        if self.engine:
+            self.engine.set_pending_priority()
+
+    def set_session(self, session_id: str):
+        """Switch to a different conversation session."""
+        if self.engine:
+            self.engine.set_session(session_id)
+
     def _sync_history(self, history: list[Message], system_prompt: str):
-        """Sync conversation history to the engine."""
+        """Sync conversation history to the engine.
+
+        When Elastic Memory is active, the ContextManager handles history
+        assembly via RAG retrieval, so we only need a minimal sync here.
+        """
+        # If elastic memory is active, skip full history rebuild —
+        # ContextManager.prepare_context() handles it in engine.chat()
+        if hasattr(self.engine, '_elastic_enabled') and self.engine._elastic_enabled:
+            # Just ensure history is clean for the next chat() call
+            self.engine.history = []
+            return
+
+        # Classic mode: full history rebuild
         self.engine.clear_history()
-        
+
         sys_prompt = system_prompt or "You are a helpful assistant."
         self.engine.history.append({"role": "system", "content": sys_prompt})
-        
+
         if history:
             for msg in history:
                 self.engine.history.append({
-                    "role": msg.role, 
+                    "role": msg.role,
                     "content": msg.content
                 })

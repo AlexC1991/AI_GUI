@@ -38,8 +38,8 @@ echo.
 :: ============================================================================
 ::  PHASE 1 - CORE FILE CHECKS
 :: ============================================================================
-echo      [1/9] CORE FILES
-echo      ~~~~~~~~~~~~~~~~~
+echo      [1/10] CORE FILES
+echo      ~~~~~~~~~~~~~~~~~~
 
 set "ERRORS=0"
 
@@ -75,8 +75,8 @@ echo.
 :: ============================================================================
 ::  PHASE 2 - VIRTUAL ENVIRONMENT
 :: ============================================================================
-echo      [2/9] VIRTUAL ENVIRONMENT
-echo      ~~~~~~~~~~~~~~~~~~~~~~~~~~
+echo      [2/10] VIRTUAL ENVIRONMENT
+echo      ~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 if exist "venv\Scripts\activate.bat" (
     echo        + venv found .................. OK
@@ -95,10 +95,50 @@ echo        i %PYVER%
 echo.
 
 :: ============================================================================
-::  PHASE 3 - DLL / RUNTIME CHECKS
+::  PHASE 3 - DEPENDENCY INSTALLATION
 :: ============================================================================
-echo      [3/9] RUNTIME LIBRARIES
-echo      ~~~~~~~~~~~~~~~~~~~~~~~~
+echo      [3/10] DEPENDENCIES
+echo      ~~~~~~~~~~~~~~~~~~~~~
+echo        i Installing requirements...
+
+pip install -r requirements.txt --quiet --disable-pip-version-check 2>nul
+if !ERRORLEVEL! EQU 0 (
+    echo        + requirements.txt ............ OK
+) else (
+    echo        ~ requirements.txt ............ WARN (some may have failed)
+)
+
+:: Sub-project requirements (if they still exist)
+if exist "VoxAI_Chat_API\requirements.txt" (
+    pip install -r VoxAI_Chat_API\requirements.txt --quiet --disable-pip-version-check 2>nul
+    echo        + VoxAI_Chat_API deps ......... OK
+)
+
+if exist "Vox_IronGate\requirements.txt" (
+    pip install -r Vox_IronGate\requirements.txt --quiet --disable-pip-version-check 2>nul
+    echo        + Vox_IronGate deps ........... OK
+)
+
+:: Verify critical packages
+python -c "import PySide6" >nul 2>&1
+if !ERRORLEVEL! EQU 0 ( echo        + PySide6 ..................... OK ) else ( echo        x PySide6 ..................... MISSING & set /a ERRORS+=1 )
+
+python -c "import msgpack" >nul 2>&1
+if !ERRORLEVEL! EQU 0 ( echo        + msgpack ..................... OK ) else ( echo        ~ msgpack ..................... WARN )
+
+python -c "import chromadb" >nul 2>&1
+if !ERRORLEVEL! EQU 0 ( echo        + chromadb .................... OK ) else ( echo        ~ chromadb .................... WARN )
+
+python -c "import psutil" >nul 2>&1
+if !ERRORLEVEL! EQU 0 ( echo        + psutil ...................... OK ) else ( echo        ~ psutil ...................... WARN )
+
+echo.
+
+:: ============================================================================
+::  PHASE 4 - DLL / RUNTIME CHECKS
+:: ============================================================================
+echo      [4/10] RUNTIME LIBRARIES
+echo      ~~~~~~~~~~~~~~~~~~~~~~~~~
 
 if exist "llama.dll" (
     echo        + llama.dll ................... OK
@@ -127,10 +167,10 @@ if exist "ggml-cpu-haswell.dll" (
 echo.
 
 :: ============================================================================
-::  PHASE 4 - AI MODELS
+::  PHASE 5 - AI MODELS
 :: ============================================================================
-echo      [4/9] AI MODELS
-echo      ~~~~~~~~~~~~~~~~~
+echo      [5/10] AI MODELS
+echo      ~~~~~~~~~~~~~~~~~~
 
 if exist "VoxAI_Chat_API" (
     echo        + VoxAI_Chat_API .............. OK
@@ -157,10 +197,10 @@ echo        + models\loras ................. OK
 echo.
 
 :: ============================================================================
-::  PHASE 5 - ZLUDA / HIP (AMD GPU for Image Generation)
+::  PHASE 6 - ZLUDA / HIP (AMD GPU for Image Generation)
 :: ============================================================================
-echo      [5/9] ZLUDA / HIP  (AMD GPU)
-echo      ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+echo      [6/10] ZLUDA / HIP  (AMD GPU)
+echo      ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 set "HIP_PATH=C:\Program Files\AMD\ROCm\6.2\"
 if exist "%HIP_PATH%bin" (
@@ -199,10 +239,10 @@ set "HIP_VISIBLE_DEVICES=0"
 echo.
 
 :: ============================================================================
-::  PHASE 6 - VULKAN BRIDGE (LLM Chat Speed)
+::  PHASE 7 - VULKAN BRIDGE (LLM Chat Speed)
 :: ============================================================================
-echo      [6/9] VULKAN BRIDGE  (LLM)
-echo      ~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+echo      [7/10] VULKAN BRIDGE  (LLM)
+echo      ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 set "PROJECT_ROOT=%~dp0"
 set "VOX_API=%PROJECT_ROOT%VoxAI_Chat_API"
@@ -216,10 +256,10 @@ echo        + Python UTF-8 encoding ........ OK
 echo.
 
 :: ============================================================================
-::  PHASE 7 - TEMP / CACHE DIRECTORIES (A: Drive)
+::  PHASE 8 - TEMP / CACHE DIRECTORIES (A: Drive)
 :: ============================================================================
-echo      [7/9] TEMP / CACHE DIRS
-echo      ~~~~~~~~~~~~~~~~~~~~~~~~
+echo      [8/10] TEMP / CACHE DIRS
+echo      ~~~~~~~~~~~~~~~~~~~~~~~~~
 
 set "AI_TEMP_DRIVE=A:"
 if exist "%AI_TEMP_DRIVE%\" (
@@ -257,10 +297,10 @@ echo        + OpenMP dup lib workaround .... ON
 echo.
 
 :: ============================================================================
-::  PHASE 8 - IRONGATE CHECK
+::  PHASE 9 - IRONGATE CHECK
 :: ============================================================================
-echo      [8/9] IRONGATE INTEGRATION
-echo      ~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+echo      [9/10] IRONGATE INTEGRATION
+echo      ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 if exist "Vox_IronGate" (
     echo        + Vox_IronGate ................ OK
@@ -281,14 +321,21 @@ if exist "Vox_IronGate" (
 echo.
 
 :: ============================================================================
-::  PHASE 9 - OUTPUT DIRECTORIES
+::  PHASE 10 - OUTPUT / DATA DIRECTORIES
 :: ============================================================================
-echo      [9/9] OUTPUT DIRECTORIES
-echo      ~~~~~~~~~~~~~~~~~~~~~~~~~
+echo      [10/10] OUTPUT / DATA DIRS
+echo      ~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 if not exist "outputs" mkdir "outputs"
 if not exist "outputs\images" mkdir "outputs\images"
 echo        + outputs\images ............... OK
+
+if not exist "VoxAI_Chat_API\data" mkdir "VoxAI_Chat_API\data" 2>nul
+if not exist "VoxAI_Chat_API\data\conversations" mkdir "VoxAI_Chat_API\data\conversations" 2>nul
+echo        + Elastic Memory data dir ...... OK
+
+if not exist "VoxAI_Chat_API\data\vectordb" mkdir "VoxAI_Chat_API\data\vectordb" 2>nul
+echo        + Vector DB dir ................ OK
 
 echo.
 
