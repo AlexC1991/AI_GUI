@@ -17,8 +17,11 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Python 3.10+](https://img.shields.io/badge/Python-3.10+-blue.svg)](https://www.python.org/downloads/)
 [![PySide6](https://img.shields.io/badge/GUI-PySide6-green.svg)](https://doc.qt.io/qtforpython/)
+[![Status: Beta](https://img.shields.io/badge/Status-Beta-orange.svg)]()
 
 *Local LLM Chat • Image Generation • Agentic Web Search • Remote Access*
+
+> ⚠️ **Beta Software:** This project is under active development. Expect bugs, breaking changes, and missing features. Contributions and bug reports welcome!
 
 </div>
 
