@@ -35,7 +35,7 @@ VoxAI isn't just another AI GUI—it's an **agentic framework** that gives local
 - 🔍 **Autonomous Search** — AI decides when to search the web, no manual triggers
 - 🖼️ **Image Generation** — Native Diffusers with SDXL, Flux, and 8GB VRAM support
 - 🌐 **Remote Access** — Share your local AI through secure web tunnels
-- 💰 **Budget-Friendly** — Runs on < $500 AUD hardware
+- 💰 **Budget-Friendly** — Runs on budget hardware
 
 > *"I gave Qwen3-8B internet access and it achieved metacognition"* — Creator
 
