@@ -1,8 +1,8 @@
 from PySide6.QtWidgets import (
     QWidget, QHBoxLayout, QTextBrowser, QFrame, QVBoxLayout,
-    QLabel, QSizePolicy, QStyle, QScrollArea
+    QLabel, QSizePolicy, QStyle, QScrollArea, QPushButton
 )
-from PySide6.QtCore import Qt, QTimer, QSize
+from PySide6.QtCore import Qt, QTimer, QSize, Signal
 from PySide6.QtGui import QTextCursor
 import markdown
 from datetime import datetime
@@ -48,14 +48,18 @@ class AutoResizingTextBrowser(QTextBrowser):
 
         # 3. Check Height
         doc.setTextWidth(final_width)
-        height = layout.documentSize().height()
+        # Use doc.size().height() which is more accurate for the set width
+        height = doc.size().height()
         max_h = 600
+        
+        # Add buffer for descenders/line-height to prevent cutoff
+        height += 15 
 
         # 4. Scrollbar Logic
         if height > max_h:
             scrollbar_width = self.style().pixelMetric(QStyle.PM_ScrollBarExtent)
             final_width += scrollbar_width
-
+            
             # Re-constrain if adding scrollbar pushed us over
             if final_width > max_w + scrollbar_width:
                 final_width = max_w + scrollbar_width
@@ -72,9 +76,15 @@ class AutoResizingTextBrowser(QTextBrowser):
 # 2. MESSAGE BUBBLE
 # ===================================================================
 class MessageBubble(QWidget):
+    # Signals for bubble actions
+    pause_requested = Signal()  # Emitted when pause icon clicked (AI bubbles)
+    edit_requested = Signal(str)  # Emitted with message content when edit clicked (user bubbles)
+    
     def __init__(self, text, sender="user"):
         super().__init__()
-
+        self.sender = sender
+        self._raw_text = text  # Store raw text for editing
+        
         self.layout = QHBoxLayout(self)
         self.layout.setContentsMargins(0, 0, 0, 0)
 
@@ -138,6 +148,48 @@ class MessageBubble(QWidget):
 
         container_layout.addWidget(self.bubble_frame)
         container_layout.addWidget(self.time_label)
+        
+        # --- Action Icons Row ---
+        action_row = QHBoxLayout()
+        action_row.setContentsMargins(10, 2, 10, 0)
+        action_row.setSpacing(4)
+        
+        icon_style = """
+            QPushButton {
+                background: transparent;
+                border: none;
+                font-size: 14px;
+                padding: 2px;
+            }
+            QPushButton:hover {
+                background: rgba(255, 255, 255, 0.1);
+                border-radius: 3px;
+            }
+        """
+        
+        if sender == "ai":
+            # AI bubbles get a pause icon (hidden by default, shown during streaming)
+            self.pause_btn = QPushButton("⏸")
+            self.pause_btn.setStyleSheet(icon_style)
+            self.pause_btn.setToolTip("Pause generation")
+            self.pause_btn.setFixedSize(24, 24)
+            self.pause_btn.clicked.connect(self._on_pause_clicked)
+            self.pause_btn.hide()  # Hidden until streaming starts
+            action_row.addWidget(self.pause_btn)
+            action_row.addStretch()
+            self.edit_btn = None
+        else:
+            # User bubbles get an edit icon
+            action_row.addStretch()  # Push to right for user bubbles
+            self.edit_btn = QPushButton("✏️")
+            self.edit_btn.setStyleSheet(icon_style)
+            self.edit_btn.setToolTip("Edit message")
+            self.edit_btn.setFixedSize(24, 24)
+            self.edit_btn.clicked.connect(self._on_edit_clicked)
+            action_row.addWidget(self.edit_btn)
+            self.pause_btn = None
+        
+        container_layout.addLayout(action_row)
 
         if sender == "user":
             self.layout.addStretch()
@@ -145,6 +197,24 @@ class MessageBubble(QWidget):
         else:
             self.layout.addWidget(container_widget)
             self.layout.addStretch()
+    
+    def _on_pause_clicked(self):
+        """Handle pause button click."""
+        self.pause_requested.emit()
+    
+    def _on_edit_clicked(self):
+        """Handle edit button click."""
+        self.edit_requested.emit(self._raw_text)
+    
+    def set_streaming(self, is_streaming: bool):
+        """Show/hide pause button during streaming (AI bubbles only)."""
+        if self.pause_btn:
+            self.pause_btn.setVisible(is_streaming)
+    
+    def set_edit_visible(self, visible: bool):
+        """Show/hide edit button (user bubbles only)."""
+        if self.edit_btn:
+            self.edit_btn.setVisible(visible)
 
     def set_content(self, text):
         if not text:
@@ -444,3 +514,163 @@ class ThinkingSection(QWidget):
         # Collapse if expanded
         if self._expanded:
             self._toggle()
+
+
+# ===================================================================
+# 5. PROCESSING INDICATOR (Gemini-Style Animated Sparkle)
+# ===================================================================
+class ProcessingIndicator(QWidget):
+    """Premium search indicator — Claude warmth, OpenAI pulse, Gemini flair.
+    Shows during search phases, disappears when answer starts streaming."""
+
+    # Rotating status phrases — personality-driven
+    PROCESSING_TEXTS = [
+        "Searching the web",
+        "Reading sources",
+        "Gathering context",
+        "Cross-referencing",
+        "Analyzing findings",
+        "Pulling it together",
+        "Checking one more thing",
+        "Almost there",
+    ]
+
+    # Orb colors for pulse cycle (teal → warm → cool → back)
+    ORB_COLORS = [
+        "#4fd1c5",  # teal
+        "#5eead4",  # mint
+        "#38bdf8",  # sky
+        "#818cf8",  # indigo
+        "#a78bfa",  # violet
+        "#818cf8",  # indigo
+        "#38bdf8",  # sky
+        "#5eead4",  # mint
+    ]
+
+    def __init__(self):
+        super().__init__()
+        self._text_index = 0
+        self._orb_frame = 0
+        self._pulse_phase = 0
+        self._user_text = None  # Stores set_text override
+
+        # Main layout — left-aligned like AI messages
+        outer_layout = QHBoxLayout(self)
+        outer_layout.setContentsMargins(0, 6, 0, 6)
+        outer_layout.setSpacing(0)
+
+        # Container — subtle frosted glass pill
+        self._container = QWidget()
+        self._container.setMaximumWidth(320)
+        self._container.setStyleSheet("""
+            QWidget {
+                background-color: rgba(30, 32, 38, 0.85);
+                border-radius: 20px;
+                border: 1px solid rgba(79, 209, 197, 0.25);
+            }
+        """)
+
+        inner_layout = QHBoxLayout(self._container)
+        inner_layout.setContentsMargins(12, 8, 16, 8)
+        inner_layout.setSpacing(10)
+
+        # ── Pulsing Orb (OpenAI-style) ──
+        self.orb_label = QLabel("●")
+        self.orb_label.setFixedSize(20, 20)
+        self.orb_label.setAlignment(Qt.AlignCenter)
+        self._update_orb()
+        inner_layout.addWidget(self.orb_label)
+
+        # ── Status Text ──
+        self.text_label = QLabel(self.PROCESSING_TEXTS[0])
+        self.text_label.setStyleSheet("""
+            color: #b8c5d6;
+            font-size: 12px;
+            font-weight: 500;
+            font-family: 'Segoe UI', 'Inter', sans-serif;
+            letter-spacing: 0.3px;
+            background: transparent;
+            border: none;
+        """)
+        inner_layout.addWidget(self.text_label)
+
+        # ── Animated Trailing Dots ──
+        self.dots_label = QLabel("")
+        self.dots_label.setFixedWidth(20)
+        self.dots_label.setStyleSheet("""
+            color: #4fd1c5;
+            font-size: 12px;
+            font-weight: 600;
+            background: transparent;
+            border: none;
+        """)
+        inner_layout.addWidget(self.dots_label)
+
+        inner_layout.addStretch()
+
+        outer_layout.addWidget(self._container)
+        outer_layout.addStretch()
+
+        # ── Animation Timers ──
+        self._dot_count = 0
+        self._dot_timer = QTimer(self)
+        self._dot_timer.timeout.connect(self._animate_dots)
+        self._dot_timer.start(400)
+
+        self._text_timer = QTimer(self)
+        self._text_timer.timeout.connect(self._rotate_text)
+        self._text_timer.start(2500)
+
+        self._orb_timer = QTimer(self)
+        self._orb_timer.timeout.connect(self._animate_orb)
+        self._orb_timer.start(200)
+
+    def _update_orb(self):
+        """Update the pulsing orb with current color and size."""
+        color = self.ORB_COLORS[self._orb_frame % len(self.ORB_COLORS)]
+        # Pulse between sizes 10-14px using sine-like pattern
+        sizes = [10, 11, 12, 13, 14, 13, 12, 11]
+        size = sizes[self._pulse_phase % len(sizes)]
+        self.orb_label.setStyleSheet(f"""
+            color: {color};
+            font-size: {size}px;
+            background: transparent;
+            border: none;
+        """)
+
+    def _animate_orb(self):
+        """Cycle orb color and pulse size."""
+        self._pulse_phase = (self._pulse_phase + 1) % 8
+        # Color shifts slower than pulse
+        if self._pulse_phase == 0:
+            self._orb_frame = (self._orb_frame + 1) % len(self.ORB_COLORS)
+        self._update_orb()
+
+    def _animate_dots(self):
+        """Cycle trailing dots: · ·· ··· then blank."""
+        self._dot_count = (self._dot_count + 1) % 4
+        self.dots_label.setText("·" * self._dot_count)
+
+    def _rotate_text(self):
+        """Rotate through status phrases (only if not overridden)."""
+        if self._user_text:
+            return
+        self._text_index = (self._text_index + 1) % len(self.PROCESSING_TEXTS)
+        self.text_label.setText(self.PROCESSING_TEXTS[self._text_index])
+
+    def set_text(self, text: str):
+        """Override the rotating text with a specific message."""
+        self._user_text = text
+        self._text_timer.stop()
+        self.text_label.setText(text)
+
+    def resume_rotation(self):
+        """Resume automatic text rotation after a set_text override."""
+        self._user_text = None
+        self._text_timer.start(2500)
+
+    def stop(self):
+        """Stop all animations (call before removing)."""
+        self._dot_timer.stop()
+        self._text_timer.stop()
+        self._orb_timer.stop()

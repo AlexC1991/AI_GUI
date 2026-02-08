@@ -391,6 +391,13 @@ class VoxAPI:
             return
             
         if self._is_generating:
+            # Reset the "already reset" flag when generation starts
+            self._cache_already_reset = False
+            self._schedule_idle_check()
+            return
+        
+        # Skip if we already reset since last activity
+        if getattr(self, '_cache_already_reset', False):
             self._schedule_idle_check()
             return
         
@@ -400,6 +407,10 @@ class VoxAPI:
             if self.verbose:
                 print(f"[VOX API] Idle for {idle_time:.0f}s, resetting KV cache...")
             self.reset_context()
+            # Mark as reset to prevent loop
+            self._cache_already_reset = True
+            # Update last activity to prevent immediate re-trigger
+            self._last_activity = time.time()
         
         self._schedule_idle_check()
     
@@ -422,6 +433,8 @@ class VoxAPI:
     def _touch_activity(self):
         """Mark that activity occurred."""
         self._last_activity = time.time()
+        # Reset the flag so cache can be cleared after next idle period
+        self._cache_already_reset = False
 
     # ============================================
     # CHAT INTERFACE
@@ -444,11 +457,23 @@ class VoxAPI:
         self._current_user_message = user_message
 
         if self._elastic_enabled and self.context_manager:
-            # Elastic Memory: ContextManager builds optimal message list
-            sys_prompt = system_prompt or "You are a helpful assistant."
-            self.history = self.context_manager.prepare_context(
-                user_message, sys_prompt
-            )
+            # Check if history was pre-populated with search results
+            # The _search_injected flag is set by VoxProvider._sync_history()
+            if getattr(self, '_search_injected', False):
+                # History was injected with search results - PRESERVE IT
+                print(f"[VOX API] Using search-injected history ({len(self.history)} items)")
+                
+                # BUG FIX: Ensure the current prompt is added!
+                self.history.append({"role": "user", "content": user_message})
+                
+                # Clear the flag for next turn
+                self._search_injected = False
+            else:
+                # Normal flow: ContextManager builds optimal message list
+                sys_prompt = system_prompt or "You are a helpful assistant."
+                self.history = self.context_manager.prepare_context(
+                    user_message, sys_prompt
+                )
         else:
             # Classic mode: unbounded history
             if not self.history:

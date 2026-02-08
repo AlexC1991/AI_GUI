@@ -1,6 +1,6 @@
 ﻿from PySide6.QtWidgets import QWidget, QVBoxLayout, QScrollArea, QFrame, QScrollBar
 from PySide6.QtCore import Qt, QTimer
-from widgets.message_bubble import MessageBubble, ThinkingBubble, ThinkingSection
+from widgets.message_bubble import MessageBubble, ThinkingBubble, ThinkingSection, ProcessingIndicator
 
 class ChatDisplay(QScrollArea):
     def __init__(self):
@@ -36,6 +36,13 @@ class ChatDisplay(QScrollArea):
         self.update_timer.timeout.connect(self._process_buffered_chunk)
         self.buffered_text = ""
         self.is_streaming = False
+        
+        # Safety flag for bubble validity
+        self.current_bubble = None
+        self._bubble_valid = False
+        
+        # Processing indicator for search phases
+        self.processing_indicator = None
 
     def scroll_to_bottom(self):
         self.verticalScrollBar().setValue(self.verticalScrollBar().maximum())
@@ -46,12 +53,21 @@ class ChatDisplay(QScrollArea):
         display_text: What to show in the UI (optional, defaults to text).
         """
         self.is_streaming = False
+        self._bubble_valid = False
         self.update_timer.stop()
         
         # Store in History
         role = "assistant" if sender == "ai" else "user"
         self.messages.append({"role": role, "content": text})
         
+        # Hide edit icon on all previous user messages if this is a user message
+        if sender == "user":
+            for i in range(self.layout.count()):
+                item = self.layout.itemAt(i)
+                widget = item.widget()
+                if isinstance(widget, MessageBubble) and getattr(widget, 'sender', '') == "user":
+                    widget.set_edit_visible(False)
+
         # Show in UI
         content_to_show = display_text if display_text else text
         bubble = MessageBubble(content_to_show, sender)
@@ -60,8 +76,20 @@ class ChatDisplay(QScrollArea):
     def get_history(self):
         return self.messages
 
+    def abort_streaming(self):
+        """Safely abort any active streaming - call before clearing chat."""
+        self.update_timer.stop()
+        self.is_streaming = False
+        self._bubble_valid = False
+        self.current_bubble = None
+        self.stream_text = ""
+        self.buffered_text = ""
+
     def clear_chat(self):
         """Deletes all message bubbles and history."""
+        # First, safely abort any streaming to prevent C++ object errors
+        self.abort_streaming()
+        
         self.messages = []
         while self.layout.count():
             item = self.layout.takeAt(0)
@@ -97,6 +125,7 @@ class ChatDisplay(QScrollArea):
         bubble = MessageBubble("", "ai")
         self.layout.addWidget(bubble)
         self.current_bubble = bubble
+        self._bubble_valid = True  # Mark bubble as valid
         self.stream_text = ""
         self.buffered_text = ""
         self.current_bubble.set_content("...") # Initial placeholder
@@ -108,25 +137,32 @@ class ChatDisplay(QScrollArea):
 
     def update_streaming_message(self, chunk):
         """Appends chunk to buffer, processed by timer."""
-        if not hasattr(self, 'current_bubble') or self.current_bubble is None:
+        if not self._bubble_valid or self.current_bubble is None:
             self.start_streaming_message()
             
         self.buffered_text += chunk
 
     def _process_buffered_chunk(self):
         """Called by timer to update UI."""
+        # Safety checks - don't process if bubble was deleted
         if not self.is_streaming or not self.buffered_text:
             return
-            
-        # Only update if there is new content
-        # We append buffer to main text and clear buffer?
-        # No, update_streaming_message appends to buffer.
-        # But wait, self.stream_text needs to hold TOTAL text.
+        
+        if not self._bubble_valid or self.current_bubble is None:
+            # Bubble was deleted (e.g., chat cleared), stop processing
+            self.update_timer.stop()
+            return
         
         self.stream_text += self.buffered_text
         self.buffered_text = ""
         
-        self.current_bubble.set_content(self.stream_text)
+        # Safely update bubble content
+        try:
+            self.current_bubble.set_content(self.stream_text)
+        except RuntimeError:
+            # C++ object was deleted, abort gracefully
+            self.abort_streaming()
+            return
         
         # Update History
         if self.messages:
@@ -136,11 +172,13 @@ class ChatDisplay(QScrollArea):
 
     def end_streaming_message(self):
         """Finalizes the stream."""
-        # Process remaining buffer
-        self._process_buffered_chunk()
+        # Process remaining buffer (only if bubble is still valid)
+        if self._bubble_valid and self.current_bubble:
+            self._process_buffered_chunk()
         
         self.update_timer.stop()
         self.is_streaming = False
+        self._bubble_valid = False
         self.current_bubble = None
         self.stream_text = ""
         self.buffered_text = ""
@@ -178,3 +216,28 @@ class ChatDisplay(QScrollArea):
         """Finalize a thinking section (collapse it, stop animation)."""
         if section:
             section.finalize()
+
+    def start_processing_indicator(self, text: str = None):
+        """Show the Gemini-style processing indicator during search phases."""
+        # Remove existing indicator if any
+        self.end_processing_indicator()
+        
+        self.processing_indicator = ProcessingIndicator()
+        if text:
+            self.processing_indicator.set_text(text)
+        self.layout.addWidget(self.processing_indicator)
+        self.scroll_to_bottom()
+        return self.processing_indicator
+
+    def update_processing_text(self, text: str):
+        """Update the processing indicator text."""
+        if self.processing_indicator:
+            self.processing_indicator.set_text(text)
+
+    def end_processing_indicator(self):
+        """Remove the processing indicator (call when answer starts)."""
+        if self.processing_indicator:
+            self.processing_indicator.stop()
+            self.layout.removeWidget(self.processing_indicator)
+            self.processing_indicator.deleteLater()
+            self.processing_indicator = None

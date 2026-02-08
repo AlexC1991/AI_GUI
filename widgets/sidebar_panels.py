@@ -4,7 +4,7 @@ Fixed for Windows 11 (uses PowerShell instead of deprecated wmic)
 """
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel, QFrame,
-    QComboBox, QSpinBox, QAbstractSpinBox, QProgressBar
+    QComboBox, QSpinBox, QAbstractSpinBox, QProgressBar, QCheckBox
 )
 from PySide6.QtCore import Qt
 import platform
@@ -98,7 +98,7 @@ class ChatOptionsPanel(QWidget):
             QPushButton, QComboBox, QSpinBox {
                 background-color: #333; border: 1px solid #444; border-radius: 4px; color: white; padding: 5px; min-height: 25px;
             }
-            #ModeBox, #MemoryBox, #CloudBox, #ModelBox { padding-left: 8px; }
+            #ModeBox, #MemoryBox, #CloudBox { padding-left: 8px; }
             QComboBox::drop-down { border: none; }
             QComboBox QAbstractItemView {
                 background-color: #2E2E2E; color: white; selection-background-color: #006666; min-width: 150px;
@@ -108,6 +108,8 @@ class ChatOptionsPanel(QWidget):
             QPushButton:hover { background-color: #3E3E3E; }
             #ClearBtn { background-color: #4a0000; border: 1px solid #600000; }
             #ClearBtn:hover { background-color: #6a0000; }
+            #ChangeModelBtn { background-color: #006666; border: 1px solid #004d4d; }
+            #ChangeModelBtn:hover { background-color: #008080; }
         """)
 
         layout = QVBoxLayout(self)
@@ -116,9 +118,6 @@ class ChatOptionsPanel(QWidget):
         layout.setSpacing(10)
 
         layout.addWidget(QLabel("Chat Section:", styleSheet="font-size: 14px; color: #FFF;"), alignment=Qt.AlignHCenter)
-
-        self.upload_btn = QPushButton("Upload")
-        layout.addWidget(self.upload_btn)
 
         layout.addWidget(QLabel("Mode:"), alignment=Qt.AlignHCenter)
         self.mode_combo = QComboBox()
@@ -149,18 +148,44 @@ class ChatOptionsPanel(QWidget):
         self.cloud_combo.addItems(["On", "Off"])
         layout.addWidget(self.cloud_combo)
 
-        layout.addWidget(QLabel("Model:"), alignment=Qt.AlignHCenter)
-        self.model_combo = QComboBox()
-        self.model_combo.setObjectName("ModelBox")
-        self.model_combo.setEditable(True) # Allow typing custom tags (e.g. ministral:8b)
-        self.model_combo.addItems(["Llama 3", "Ministral 8B", "Mistral", "Gemma"])
-        layout.addWidget(self.model_combo)
+        # --- Model Section (Replaces Dropdown) ---
+        layout.addSpacing(10)
+        layout.addWidget(QLabel("Current Model:"), alignment=Qt.AlignHCenter)
+        
+        self.current_model_label = QLabel("(None)")
+        self.current_model_label.setAlignment(Qt.AlignCenter)
+        self.current_model_label.setStyleSheet("color: #00FFFF; font-weight: bold; font-size: 13px;")
+        self.current_model_label.setWordWrap(True)
+        layout.addWidget(self.current_model_label)
+        
+        self.change_model_btn = QPushButton("Change Model")
+        self.change_model_btn.setObjectName("ChangeModelBtn")
+        self.change_model_btn.setFixedHeight(30)
+        layout.addWidget(self.change_model_btn)
+
+        layout.addSpacing(10)
+        self.reasoning_mode_chk = QCheckBox("Force Reasoning Mode")
+        self.reasoning_mode_chk.setToolTip("Injects system prompt to force <think> tags")
+        self.reasoning_mode_chk.setStyleSheet("color: #E0E0E0;")
+        layout.addWidget(self.reasoning_mode_chk)
 
         layout.addSpacing(15)
-        self.clear_btn = QPushButton("Clear Chat")
-        self.clear_btn.setObjectName("ClearBtn")
-        self.clear_btn.setFixedHeight(30)
-        layout.addWidget(self.clear_btn)
+        
+        # --- Network Status Indicator ---
+        net_layout = QHBoxLayout()
+        net_layout.setContentsMargins(0, 0, 0, 0)
+        net_layout.setSpacing(6)
+        
+        self.network_icon = QLabel("🌐")
+        self.network_icon.setStyleSheet("font-size: 16px;")
+        net_layout.addWidget(self.network_icon)
+        
+        self.network_label = QLabel("Checking...")
+        self.network_label.setStyleSheet("color: #888; font-size: 11px;")
+        net_layout.addWidget(self.network_label)
+        net_layout.addStretch()
+        
+        layout.addLayout(net_layout)
 
         layout.addSpacing(10)
         self.status_label = QLabel("Status: Idle")
@@ -170,46 +195,66 @@ class ChatOptionsPanel(QWidget):
 
         layout.addStretch()
 
-        self.local_models_cache = [] # Cache for local models
+        self.local_models_cache = []  # Cache for local models
+        self.selected_model = None    # Currently selected model data
+    
+    # --- Network Status Methods ---
+    
+    def set_network_status(self, status: str):
+        """Update network status indicator. 
+        status: 'online', 'offline', 'searching', 'checking'
+        """
+        if status == "online":
+            self.network_icon.setText("🟢")
+            self.network_label.setText("Online")
+            self.network_label.setStyleSheet("color: #5cb85c; font-size: 11px;")
+        elif status == "offline":
+            self.network_icon.setText("🔴")
+            self.network_label.setText("Offline")
+            self.network_label.setStyleSheet("color: #d9534f; font-size: 11px;")
+        elif status == "searching":
+            self.network_icon.setText("🔍")
+            self.network_label.setText("Searching...")
+            self.network_label.setStyleSheet("color: #f0ad4e; font-size: 11px;")
+        else:  # checking
+            self.network_icon.setText("🌐")
+            self.network_label.setText("Checking...")
+            self.network_label.setStyleSheet("color: #888; font-size: 11px;")
 
     def set_local_models(self, models):
         """Called by MainWindow to update the list with real installed models"""
         self.local_models_cache = models if models else []
         
-        # Only update combo if we are currently in Local mode
-        if "VoxAI" in self.mode_combo.currentText():
-            # current_text = self.model_combo.currentText() # Hard to restore strictly by text if formatting changes
-            self.model_combo.clear()
-            
-            if self.local_models_cache:
-                for m in self.local_models_cache:
-                    # m is {"display":str, "filename":str}
-                    if isinstance(m, dict):
-                        self.model_combo.addItem(m["display"], m["filename"])
-                    else:
-                        # Fallback for error strings
-                        self.model_combo.addItem(str(m))
-            else:
-                self.model_combo.addItem("(No models found)")
-            
-            # Default to first item if available
-            if self.model_combo.count() > 0:
-                self.model_combo.setCurrentIndex(0)
+        # Auto-select first model if none selected
+        if self.local_models_cache and self.selected_model is None:
+            first = self.local_models_cache[0]
+            if isinstance(first, dict):
+                self.set_selected_model(first)
+    
+    def set_selected_model(self, model_data):
+        """Set the currently selected model and update the label."""
+        self.selected_model = model_data
+        if isinstance(model_data, dict):
+            # Extract short name (max 2 words from display name)
+            display = model_data.get("display", "Unknown")
+            parts = display.split()[:2]  # Take first 2 words
+            short_name = " ".join(parts)
+            self.current_model_label.setText(short_name)
+        else:
+            self.current_model_label.setText(str(model_data) if model_data else "(None)")
     
     def _update_models(self, mode):
-        self.model_combo.clear()
-        if "VoxAI" in mode:
-            # Restore cached local models
-            if self.local_models_cache:
-                for m in self.local_models_cache:
-                    if isinstance(m, dict):
-                        self.model_combo.addItem(m["display"], m["filename"])
-                    else:
-                        self.model_combo.addItem(str(m))
-            else:
-                self.model_combo.addItem("Loading...")
+        """Handle mode change - reset model selection for Provider mode"""
+        if "VoxAI" not in mode:
+            # Provider mode - show placeholder
+            self.current_model_label.setText("API Model")
+            self.selected_model = {"display": "API Model", "filename": "provider"}
         else:
-            self.model_combo.addItems(["Gemini Pro", "GPT-4o", "Claude 3.5"])
+            # Local mode - restore cached selection or first model
+            if self.selected_model and self.selected_model.get("filename") != "provider":
+                self.set_selected_model(self.selected_model)
+            elif self.local_models_cache:
+                self.set_selected_model(self.local_models_cache[0])
 
     def update_status(self, state):
         color = "#00FF00" if state.lower() == "idle" else "#00FFFF"

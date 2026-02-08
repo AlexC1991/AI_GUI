@@ -14,8 +14,14 @@ class MagicInput(QTextEdit):
         self.resize_needed.emit()
 
 class InputBar(QWidget):
+    # Signal emitted when clear button is clicked
+    clear_requested = Signal()
+    
     def __init__(self):
         super().__init__()
+        
+        # Track generation state
+        self._is_generating = False
 
         main_layout = QHBoxLayout(self)
         main_layout.setSpacing(15)
@@ -56,20 +62,36 @@ class InputBar(QWidget):
 
         wrapper_layout.addWidget(self.input)
 
-        self.send_button = QPushButton("Send")
-        self.send_button.setFixedWidth(80)
-        self.send_button.setFixedHeight(40)
-
-        self.send_button.setStyleSheet("""
+        # --- Common button style ---
+        btn_style = """
             QPushButton {
                 background-color: #2E2E2E;
                 color: white;
                 border: 2px solid #444;
                 border-radius: 6px;
+                font-size: 16px;
             }
             QPushButton:hover { background-color: #3E3E3E; }
             QPushButton:pressed { background-color: #1E1E1E; }
-        """)
+        """
+        # --- Button 1: Attachment ---
+        self.attach_btn = QPushButton("📎")
+        self.attach_btn.setFixedSize(26, 36)
+        self.attach_btn.setToolTip("Attach File")
+        self.attach_btn.setStyleSheet(btn_style)
+
+        # --- Button 2: Clear Chat ---
+        self.clear_btn = QPushButton("🗑️")
+        self.clear_btn.setFixedSize(26, 36)
+        self.clear_btn.setToolTip("Clear Chat")
+        self.clear_btn.setStyleSheet(btn_style)
+        self.clear_btn.clicked.connect(self._on_clear_clicked)
+
+        # --- Button 3: Send ---
+        self.send_button = QPushButton("Send")
+        self.send_button.setFixedSize(80, 36)
+        self.send_button.setToolTip("Send Message")
+        self.send_button.setStyleSheet(btn_style + "font-weight: bold;")
 
         # --- Speed Stats Label ---
         self.stats_label = QLabel("")
@@ -86,9 +108,11 @@ class InputBar(QWidget):
 
         # Layout: input row + stats underneath
         input_row = QHBoxLayout()
-        input_row.setSpacing(15)
+        input_row.setSpacing(8)
         input_row.setContentsMargins(0, 0, 0, 0)
-        input_row.addWidget(self.input_wrapper)
+        input_row.addWidget(self.input_wrapper, 1) # Add stretch factor 1 to push buttons right
+        input_row.addWidget(self.attach_btn, 0, Qt.AlignBottom)
+        input_row.addWidget(self.clear_btn, 0, Qt.AlignBottom)
         input_row.addWidget(self.send_button, 0, Qt.AlignBottom)
 
         outer_layout = QVBoxLayout()
@@ -160,3 +184,29 @@ class InputBar(QWidget):
         style = self.input_wrapper.styleSheet()
         self.input_wrapper.setStyleSheet(style.replace("1.5px solid #008080", "1.5px solid #555"))
         QTextEdit.focusOutEvent(self.input, event)
+    
+    # --- Generation State Methods ---
+    
+    def _on_clear_clicked(self):
+        """Handle clear button click."""
+        self.clear_requested.emit()
+    
+    def set_generating(self, is_generating: bool):
+        """Update UI state when generation starts/stops.
+        Disables input during generation.
+        """
+        self._is_generating = is_generating
+        if is_generating:
+            self.send_button.setEnabled(False)
+            self.clear_btn.setEnabled(False)
+            self.input.setEnabled(False)
+            self.input.setPlaceholderText("Generating response...")
+        else:
+            self.send_button.setEnabled(True)
+            self.clear_btn.setEnabled(True)
+            self.input.setEnabled(True)
+            self.input.setPlaceholderText("Type your message here...")
+    
+    def is_generating(self) -> bool:
+        """Check if currently generating."""
+        return self._is_generating

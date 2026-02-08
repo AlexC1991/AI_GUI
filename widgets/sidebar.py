@@ -115,13 +115,11 @@ class Sidebar(QWidget):
         if mode == "chat":
             self.current_panel = ChatOptionsPanel()
             # Hook up buttons for MainWindow
-            self.upload_btn = self.current_panel.upload_btn
-            self.clear_btn = self.current_panel.clear_btn
+            self.change_model_btn = self.current_panel.change_model_btn
 
         elif mode == "settings":
             self.current_panel = SystemInfoPanel()
-            self.upload_btn = None
-            self.clear_btn = None
+            self.change_model_btn = None
 
         elif mode == "image":
             # --- THE FIX IS HERE ---

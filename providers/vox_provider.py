@@ -148,6 +148,16 @@ class VoxProvider(BaseProvider):
                 return os.path.join(models_dir, f)
                 
         return None
+    
+    def set_search_injected(self, value: bool = True):
+        """Mark that history was injected with search results.
+        
+        This flag tells VoxAPI.chat() to preserve the current history
+        instead of rebuilding it via ContextManager.
+        """
+        if self.engine:
+            self.engine._search_injected = value
+            print(f"[VoxProvider] Search injection flag set to: {value}")
 
     def send_message(self, prompt: str, history: list[Message] = None, 
                      system_prompt: str = None) -> str:
@@ -208,14 +218,30 @@ class VoxProvider(BaseProvider):
         """Sync conversation history to the engine.
 
         When Elastic Memory is active, the ContextManager handles history
-        assembly via RAG retrieval, so we only need a minimal sync here.
+        assembly via RAG retrieval. However, if explicit history is passed
+        (e.g., after a search injection), we sync it to the engine.
+        
+        NOTE: The _search_injected flag must be set EXTERNALLY by the caller
+        (ChatAgent) when injecting search results. This function does NOT
+        auto-detect search injection.
         """
-        # If elastic memory is active, skip full history rebuild —
-        # ContextManager.prepare_context() handles it in engine.chat()
         if hasattr(self.engine, '_elastic_enabled') and self.engine._elastic_enabled:
-            # Just ensure history is clean for the next chat() call
-            self.engine.history = []
-            return
+            if history and len(history) > 0:
+                # Sync history to the engine
+                self.engine.history = []
+                sys_prompt = system_prompt or "You are a helpful assistant."
+                self.engine.history.append({"role": "system", "content": sys_prompt})
+                for msg in history:
+                    self.engine.history.append({
+                        "role": msg.role,
+                        "content": msg.content
+                    })
+                print(f"[VoxProvider] Synced {len(history)} history items")
+                return
+            else:
+                # No explicit history - let ContextManager handle it
+                self.engine.history = []
+                return
 
         # Classic mode: full history rebuild
         self.engine.clear_history()
