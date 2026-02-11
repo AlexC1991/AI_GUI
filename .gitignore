@@ -1,7 +1,6 @@
 # ===========================
 # AI Models & Large Files
 # ===========================
-models/
 *.gguf
 *.safetensors
 *.bin
@@ -13,32 +12,42 @@ models/
 # DLLs (llama.cpp runtime - download separately)
 *.dll
 
+# Always keep .gitkeep for directory structure
+!.gitkeep
+
 # ===========================
 # Output & Generated Files
 # ===========================
-outputs/
+outputs/images/*
+!outputs/images/.gitkeep
 temp_workspace/
 temp/
 tmp/
 
 # ===========================
-# Subproject Runtime/Data
+# Engine Runtime/Data
 # ===========================
-VoxAI_Chat_API/models/
-VoxAI_Chat_API/data/
+engine/data/conversations/*
+!engine/data/conversations/.gitkeep
+engine/data/vectordb/*
+!engine/data/vectordb/.gitkeep
 data/
-VoxAI_Chat_API/__pycache__/
-VoxAI_Chat_API/elastic_memory/__pycache__/
-Vox_IronGate/exports/
-Vox_IronGate/uploads/
-Vox_IronGate/uploads_desktop/
-Vox_IronGate/logs/
-Vox_IronGate/clients.json
-Vox_IronGate/host_config.json
-Vox_IronGate/host_identity.key
-Vox_IronGate/__pycache__/
-Vox_IronGate/lib/__pycache__/
-Vox_IronGate/vox_install_code.txt
+engine/__pycache__/
+engine/elastic_memory/__pycache__/
+
+# ===========================
+# Gateway Runtime/Data
+# ===========================
+gateway/exports/
+gateway/uploads/
+gateway/uploads_desktop/
+gateway/logs/
+gateway/clients.json
+gateway/host_config.json
+gateway/host_identity.key
+gateway/__pycache__/
+gateway/lib/__pycache__/
+gateway/vox_install_code.txt
 
 # ===========================
 # Python / Cache
@@ -72,6 +81,9 @@ cache/
 .cache/
 .hf_cache/
 .huggingface/
+models/hf_cache/
+models/text_encoders/
+models/vae/
 
 # ===========================
 # IDE & Editor
@@ -95,3 +107,4 @@ Desktop.ini
 nul
 .claude/
 *.crdownload
+*.exe

@@ -108,15 +108,15 @@ if !ERRORLEVEL! EQU 0 (
     echo        ~ requirements.txt ............ WARN (some may have failed)
 )
 
-:: Sub-project requirements (if they still exist)
-if exist "VoxAI_Chat_API\requirements.txt" (
-    pip install -r VoxAI_Chat_API\requirements.txt --quiet --disable-pip-version-check 2>nul
-    echo        + VoxAI_Chat_API deps ......... OK
+:: Sub-project requirements
+if exist "engine\requirements.txt" (
+    pip install -r engine\requirements.txt --quiet --disable-pip-version-check 2>nul
+    echo        + engine deps ................. OK
 )
 
-if exist "Vox_IronGate\requirements.txt" (
-    pip install -r Vox_IronGate\requirements.txt --quiet --disable-pip-version-check 2>nul
-    echo        + Vox_IronGate deps ........... OK
+if exist "gateway\requirements.txt" (
+    pip install -r gateway\requirements.txt --quiet --disable-pip-version-check 2>nul
+    echo        + gateway deps ................ OK
 )
 
 :: Verify critical packages
@@ -172,15 +172,15 @@ echo.
 echo      [5/10] AI MODELS
 echo      ~~~~~~~~~~~~~~~~~~
 
-if exist "VoxAI_Chat_API" (
-    echo        + VoxAI_Chat_API .............. OK
+if exist "engine" (
+    echo        + engine ...................... OK
 ) else (
-    echo        ~ VoxAI_Chat_API .............. WARN (no AI chat)
+    echo        ~ engine ...................... WARN (no AI chat)
 )
 
 set "MODEL_COUNT=0"
-if exist "VoxAI_Chat_API\models" (
-    for %%f in ("VoxAI_Chat_API\models\*.gguf") do set /a MODEL_COUNT+=1
+if exist "models\llm" (
+    for %%f in ("models\llm\*.gguf") do set /a MODEL_COUNT+=1
 )
 if !MODEL_COUNT! GTR 0 (
     echo        + GGUF models ................. !MODEL_COUNT! found
@@ -245,9 +245,9 @@ echo      [7/10] VULKAN BRIDGE  (LLM)
 echo      ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 set "PROJECT_ROOT=%~dp0"
-set "VOX_API=%PROJECT_ROOT%VoxAI_Chat_API"
+set "VOX_API=%PROJECT_ROOT%engine"
 set "PATH=%VOX_API%;%PATH%"
-echo        + VoxAI_Chat_API on PATH ....... OK
+echo        + engine on PATH .............. OK
 
 set PYTHONIOENCODING=utf-8
 set PYTHONLEGACYWINDOWSSTDIO=utf-8
@@ -302,20 +302,20 @@ echo.
 echo      [9/10] IRONGATE INTEGRATION
 echo      ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-if exist "Vox_IronGate" (
-    echo        + Vox_IronGate ................ OK
-    if exist "Vox_IronGate\iron_host.py" (
+if exist "gateway" (
+    echo        + gateway ..................... OK
+    if exist "gateway\iron_host.py" (
         echo        + iron_host.py ................ OK  [Web Gateway]
     ) else (
         echo        ~ iron_host.py ................ MISSING
     )
-    if exist "Vox_IronGate\iron_desktop.py" (
+    if exist "gateway\iron_desktop.py" (
         echo        + iron_desktop.py ............. OK  [Desktop Svc]
     ) else (
         echo        ~ iron_desktop.py ............. MISSING
     )
 ) else (
-    echo        ~ Vox_IronGate ................ NOT FOUND
+    echo        ~ gateway ..................... NOT FOUND
 )
 
 echo.
@@ -330,12 +330,15 @@ if not exist "outputs" mkdir "outputs"
 if not exist "outputs\images" mkdir "outputs\images"
 echo        + outputs\images ............... OK
 
-if not exist "VoxAI_Chat_API\data" mkdir "VoxAI_Chat_API\data" 2>nul
-if not exist "VoxAI_Chat_API\data\conversations" mkdir "VoxAI_Chat_API\data\conversations" 2>nul
+if not exist "engine\data" mkdir "engine\data" 2>nul
+if not exist "engine\data\conversations" mkdir "engine\data\conversations" 2>nul
 echo        + Elastic Memory data dir ...... OK
 
-if not exist "VoxAI_Chat_API\data\vectordb" mkdir "VoxAI_Chat_API\data\vectordb" 2>nul
+if not exist "engine\data\vectordb" mkdir "engine\data\vectordb" 2>nul
 echo        + Vector DB dir ................ OK
+
+if not exist "models\llm" mkdir "models\llm" 2>nul
+echo        + models\llm ................... OK
 
 echo.
 
@@ -379,7 +382,7 @@ if errorlevel 1 (
     echo        1. Check terminal output above for tracebacks
     echo        2. pip install -r requirements.txt
     echo        3. Verify config.json has valid API key
-    echo        4. Check VoxAI_Chat_API\models\ has .gguf files
+    echo        4. Check models\llm\ has .gguf files
     echo.
     pause
 ) else (

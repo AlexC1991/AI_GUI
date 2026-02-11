@@ -34,8 +34,8 @@ class IronGateThread(QThread):
         self._running = True
         try:
             root_dir = os.path.dirname(os.path.dirname(__file__))
-            script_path = os.path.join(root_dir, "Vox_IronGate", "iron_host.py")
-            code_file = os.path.join(root_dir, "Vox_IronGate", "vox_install_code.txt")
+            script_path = os.path.join(root_dir, "gateway", "iron_host.py")
+            code_file = os.path.join(root_dir, "gateway", "vox_install_code.txt")
 
             if not os.path.exists(script_path):
                 self.error.emit(f"iron_host.py not found at {script_path}")
@@ -116,7 +116,7 @@ class DesktopServiceThread(QThread):
         self._running = True
         try:
             root_dir = os.path.dirname(os.path.dirname(__file__))
-            script_path = os.path.join(root_dir, "Vox_IronGate", "iron_desktop.py")
+            script_path = os.path.join(root_dir, "gateway", "iron_desktop.py")
 
             if not os.path.exists(script_path):
                 self.error.emit(f"iron_desktop.py not found at {script_path}")
@@ -164,6 +164,8 @@ class DesktopServiceThread(QThread):
 
 
 class SettingsView(QScrollArea):
+    llm_settings_saved = Signal()  # Emitted when LLM/API settings change (triggers image gen refresh)
+
     def __init__(self):
         super().__init__()
 
@@ -292,6 +294,7 @@ class SettingsView(QScrollArea):
         self.create_irongate_section()  # NEW - Vox IronGate
         self.create_elastic_memory_section()
         self.create_llm_section()
+        self.create_cloud_gpu_section()
         self.create_image_section()
         self.create_remote_section()
 
@@ -553,7 +556,7 @@ class SettingsView(QScrollArea):
     def _get_default_data_dir(self):
         """Get the default elastic memory data directory."""
         root = os.path.dirname(os.path.dirname(__file__))
-        return os.path.join(root, "VoxAI_Chat_API", "data", "conversations")
+        return os.path.join(root, "engine", "data", "conversations")
 
     def _update_drive_space(self):
         """Update drive space info for the selected data directory."""
@@ -582,7 +585,7 @@ class SettingsView(QScrollArea):
         try:
             import sys as _sys
             vox_path = os.path.join(os.path.dirname(os.path.dirname(__file__)),
-                                     "VoxAI_Chat_API")
+                                     "engine")
             if vox_path not in _sys.path:
                 _sys.path.insert(0, vox_path)
 
@@ -614,26 +617,77 @@ class SettingsView(QScrollArea):
             self.elastic_status.setStyleSheet("color: #FF5722; font-size: 13px;")
 
     def create_llm_section(self):
-        group = QGroupBox("LLM Configuration (Local & Provider)")
+        group = QGroupBox("LLM Configuration (Providers)")
         layout = QVBoxLayout(group)
         layout.setSpacing(15)
         layout.setContentsMargins(20, 35, 20, 20)
 
-        # --- CLOUD PROVIDER ---
-        layout.addWidget(QLabel("Provider API Key (Auto-saves to .env):"))
+        key_style = "font-size: 12px; color: #aaa; font-weight: bold;"
 
-        row1 = QHBoxLayout()
-        self.provider_combo = QComboBox()
-        self.provider_combo.addItems(["Google Gemini", "OpenAI", "Anthropic", "Mistral API"])
-        self.provider_combo.setFixedWidth(150)
-
+        # --- GEMINI API KEY ---
+        layout.addWidget(QLabel("Google Gemini API Key:"))
         self.api_key_input = QLineEdit()
-        self.api_key_input.setPlaceholderText("sk-...")
+        self.api_key_input.setPlaceholderText("AIza...")
         self.api_key_input.setEchoMode(QLineEdit.Password)
+        layout.addWidget(self.api_key_input)
 
-        row1.addWidget(self.provider_combo)
-        row1.addWidget(self.api_key_input)
-        layout.addLayout(row1)
+        # --- OPENAI API KEY ---
+        layout.addWidget(QLabel("OpenAI API Key:"))
+        self.openai_key_input = QLineEdit()
+        self.openai_key_input.setPlaceholderText("sk-...")
+        self.openai_key_input.setEchoMode(QLineEdit.Password)
+        layout.addWidget(self.openai_key_input)
+
+        # --- ANTHROPIC API KEY (future) ---
+        anthropic_label = QLabel("Anthropic API Key (Coming Soon):")
+        anthropic_label.setStyleSheet("color: #666;")
+        layout.addWidget(anthropic_label)
+        self.anthropic_key_input = QLineEdit()
+        self.anthropic_key_input.setPlaceholderText("sk-ant-...")
+        self.anthropic_key_input.setEchoMode(QLineEdit.Password)
+        self.anthropic_key_input.setEnabled(False)
+        self.anthropic_key_input.setStyleSheet("background-color: #1a1a1a; color: #555;")
+        layout.addWidget(self.anthropic_key_input)
+
+        # Keep provider_combo hidden but present for backward compat
+        self.provider_combo = QComboBox()
+        self.provider_combo.addItems(["Google Gemini", "OpenAI", "Anthropic"])
+        self.provider_combo.hide()
+
+        # Fetch Models button + status
+        fetch_row = QHBoxLayout()
+        self.fetch_models_btn = QPushButton("Fetch Available Models")
+        self.fetch_models_btn.setCursor(Qt.PointingHandCursor)
+        self.fetch_models_btn.setStyleSheet("background-color: #006666; padding: 6px;")
+        self.fetch_models_btn.clicked.connect(self._fetch_provider_models)
+        fetch_row.addWidget(self.fetch_models_btn)
+
+        self.fetch_status_label = QLabel("")
+        self.fetch_status_label.setStyleSheet("color: #888; font-size: 11px;")
+        fetch_row.addWidget(self.fetch_status_label)
+        fetch_row.addStretch()
+        layout.addLayout(fetch_row)
+
+        # Available Models list (all providers combined)
+        from PySide6.QtWidgets import QListWidget
+        self.provider_models_list = QListWidget()
+        self.provider_models_list.setMaximumHeight(150)
+        self.provider_models_list.setStyleSheet("""
+            QListWidget {
+                background-color: #252526;
+                border: 1px solid #444;
+                border-radius: 4px;
+                font-size: 12px;
+                color: #ccc;
+            }
+            QListWidget::item { padding: 4px 8px; }
+            QListWidget::item:selected { background-color: #006666; color: white; }
+        """)
+        layout.addWidget(self.provider_models_list)
+
+        models_note = QLabel("Models from all providers with valid keys. Populates the Providers tab in Model Selector.")
+        models_note.setStyleSheet("color: #888; font-size: 10px; font-weight: normal;")
+        layout.addWidget(models_note)
 
         # Separator
         line = QFrame()
@@ -644,9 +698,15 @@ class SettingsView(QScrollArea):
         # Load defaults
         self.config = ConfigManager.load_config()
         llm_cfg = self.config.get("llm", {})
-        
-        self.provider_combo.setCurrentText(llm_cfg.get("provider", "Google Gemini"))
+
         self.api_key_input.setText(llm_cfg.get("api_key", ""))
+        self.openai_key_input.setText(llm_cfg.get("openai_api_key", ""))
+        self.anthropic_key_input.setText(llm_cfg.get("anthropic_api_key", ""))
+
+        # Auto-populate if any key exists
+        has_any_key = llm_cfg.get("api_key", "") or llm_cfg.get("openai_api_key", "")
+        if has_any_key:
+            QTimer.singleShot(1000, self._fetch_provider_models)
 
         # --- LOCAL MODELS MANAGER ---
         mgr_layout = QHBoxLayout()
@@ -674,21 +734,216 @@ class SettingsView(QScrollArea):
         layout.addWidget(apply_btn, 0, Qt.AlignRight)
 
         self.main_layout.addWidget(group)
-        
+
+    def create_cloud_gpu_section(self):
+        """☁️ Cloud GPU (RunPod) — dedicated settings group."""
+        group = QGroupBox("☁️ Cloud GPU (RunPod)")
+        group.setStyleSheet(group.styleSheet() + """
+            QGroupBox { border-color: #bb86fc; }
+            QGroupBox::title { color: #bb86fc; }
+        """)
+        layout = QVBoxLayout(group)
+        layout.setSpacing(12)
+        layout.setContentsMargins(20, 35, 20, 20)
+
+        cloud_cfg = self.config.get("cloud", {})
+
+        # RunPod API Key
+        layout.addWidget(QLabel("RunPod API Key:"))
+        self.cloud_runpod_key = QLineEdit()
+        self.cloud_runpod_key.setPlaceholderText("rpa_...")
+        self.cloud_runpod_key.setEchoMode(QLineEdit.Password)
+        self.cloud_runpod_key.setText(cloud_cfg.get("runpod_api_key", ""))
+        layout.addWidget(self.cloud_runpod_key)
+
+        # Pod ID
+        pod_row = QHBoxLayout()
+        pod_row.addWidget(QLabel("Pod ID (optional):"))
+        self.cloud_pod_id = QLineEdit()
+        self.cloud_pod_id.setPlaceholderText("Auto-create if empty")
+        self.cloud_pod_id.setText(cloud_cfg.get("pod_id", ""))
+        pod_row.addWidget(self.cloud_pod_id)
+        layout.addLayout(pod_row)
+
+        # HuggingFace Token (for gated models like Llama)
+        layout.addWidget(QLabel("HuggingFace Token (for gated models):"))
+        self.cloud_hf_token = QLineEdit()
+        self.cloud_hf_token.setPlaceholderText("hf_...")
+        self.cloud_hf_token.setEchoMode(QLineEdit.Password)
+        self.cloud_hf_token.setText(cloud_cfg.get("hf_token", ""))
+        layout.addWidget(self.cloud_hf_token)
+
+        # Separator
+        line = QFrame()
+        line.setFrameShape(QFrame.HLine)
+        line.setStyleSheet("background-color: #333; margin: 8px 0;")
+        layout.addWidget(line)
+
+        # --- Cloud Models List ---
+        models_header = QLabel("Cloud Models (HF ID → Display Name)")
+        models_header.setStyleSheet("color: #bb86fc; font-weight: bold;")
+        layout.addWidget(models_header)
+
+        from PySide6.QtWidgets import QListWidget, QListWidgetItem
+        self.cloud_models_list = QListWidget()
+        self.cloud_models_list.setMaximumHeight(150)
+        self.cloud_models_list.setStyleSheet("""
+            QListWidget {
+                background-color: #252526;
+                border: 1px solid #444;
+                border-radius: 4px;
+                font-size: 11px;
+                color: #ccc;
+            }
+            QListWidget::item { padding: 4px 8px; }
+            QListWidget::item:selected { background-color: #006666; color: white; }
+        """)
+        layout.addWidget(self.cloud_models_list)
+
+        # Populate from config
+        cloud_models = cloud_cfg.get("models", {})
+        for hf_id, display in cloud_models.items():
+            self.cloud_models_list.addItem(f"{display}  ⟵  {hf_id}")
+
+        # Add/Remove row
+        add_rm_row = QHBoxLayout()
+        self.cloud_model_hf_input = QLineEdit()
+        self.cloud_model_hf_input.setPlaceholderText("HF Model ID (e.g. Qwen/Qwen2.5-72B-Instruct-AWQ)")
+        add_rm_row.addWidget(self.cloud_model_hf_input)
+
+        self.cloud_model_name_input = QLineEdit()
+        self.cloud_model_name_input.setPlaceholderText("Display Name")
+        self.cloud_model_name_input.setFixedWidth(150)
+        add_rm_row.addWidget(self.cloud_model_name_input)
+
+        add_btn = QPushButton("+ Add")
+        add_btn.setCursor(Qt.PointingHandCursor)
+        add_btn.setStyleSheet("background-color: #006666;")
+        add_btn.clicked.connect(self._add_cloud_model)
+        add_rm_row.addWidget(add_btn)
+
+        rm_btn = QPushButton("— Remove")
+        rm_btn.setCursor(Qt.PointingHandCursor)
+        rm_btn.setStyleSheet("background-color: #8b2d2d;")
+        rm_btn.clicked.connect(self._remove_cloud_model)
+        add_rm_row.addWidget(rm_btn)
+
+        layout.addLayout(add_rm_row)
+
+        # Info label
+        info = QLabel("GPU tier is auto-detected from model name (70B+ → A100/H100, others → A40/A6000).")
+        info.setStyleSheet("color: #888; font-size: 10px; font-weight: normal;")
+        info.setWordWrap(True)
+        layout.addWidget(info)
+
+        # Apply
+        apply_btn = QPushButton("Apply Cloud Settings")
+        apply_btn.setObjectName("ApplyBtn")
+        apply_btn.clicked.connect(self.save_cloud_settings)
+        layout.addWidget(apply_btn, 0, Qt.AlignRight)
+
+        self.main_layout.addWidget(group)
+
+    def _add_cloud_model(self):
+        """Add a cloud model to the list."""
+        hf_id = self.cloud_model_hf_input.text().strip()
+        display = self.cloud_model_name_input.text().strip()
+        if not hf_id:
+            QMessageBox.warning(self, "Missing ID", "Enter a HuggingFace model ID.")
+            return
+        if not display:
+            # Auto-generate display name from HF ID
+            display = hf_id.split("/")[-1] if "/" in hf_id else hf_id
+        self.cloud_models_list.addItem(f"{display}  ⟵  {hf_id}")
+        self.cloud_model_hf_input.clear()
+        self.cloud_model_name_input.clear()
+
+    def _remove_cloud_model(self):
+        """Remove selected cloud model from the list."""
+        current = self.cloud_models_list.currentRow()
+        if current >= 0:
+            self.cloud_models_list.takeItem(current)
+
+    def save_cloud_settings(self):
+        """Save cloud GPU settings to config['cloud']."""
+        cfg = self.config
+        if "cloud" not in cfg:
+            cfg["cloud"] = {}
+
+        cfg["cloud"]["runpod_api_key"] = self.cloud_runpod_key.text().strip()
+        cfg["cloud"]["hf_token"] = self.cloud_hf_token.text().strip()
+        cfg["cloud"]["pod_id"] = self.cloud_pod_id.text().strip()
+
+        # Parse models list back into dict
+        models = {}
+        for i in range(self.cloud_models_list.count()):
+            text = self.cloud_models_list.item(i).text()
+            if "⟵" in text:
+                parts = text.split("⟵")
+                display = parts[0].strip()
+                hf_id = parts[1].strip()
+                models[hf_id] = display
+        cfg["cloud"]["models"] = models
+
+        ConfigManager.save_config(cfg)
+        QMessageBox.information(self, "Settings Saved", "Cloud GPU settings updated!")
+
+    def _fetch_provider_models(self):
+        """Fetch available models from ALL providers with valid API keys."""
+        gemini_key = self.api_key_input.text().strip()
+        openai_key = self.openai_key_input.text().strip()
+
+        if not gemini_key and not openai_key:
+            self.fetch_status_label.setText("Enter at least one API key")
+            self.fetch_status_label.setStyleSheet("color: #f0ad4e; font-size: 11px;")
+            return
+
+        self.fetch_status_label.setText("Fetching...")
+        self.fetch_status_label.setStyleSheet("color: #4ade80; font-size: 11px;")
+        self.provider_models_list.clear()
+
+        all_models = []
+
+        try:
+            # Gemini models
+            if gemini_key:
+                from providers.gemini_provider import GeminiProvider
+                for name in GeminiProvider.list_available_models(api_key=gemini_key):
+                    all_models.append(f"{name}  [Gemini]")
+
+            # OpenAI models
+            if openai_key:
+                from providers.openai_provider import OpenAIProvider
+                for name in OpenAIProvider.list_available_models(api_key=openai_key):
+                    all_models.append(f"{name}  [OpenAI]")
+
+            for display in all_models:
+                self.provider_models_list.addItem(display)
+
+            self.fetch_status_label.setText(f"Found {len(all_models)} models")
+            self.fetch_status_label.setStyleSheet("color: #4ade80; font-size: 11px;")
+
+        except Exception as e:
+            self.fetch_status_label.setText(f"Error: {e}")
+            self.fetch_status_label.setStyleSheet("color: #d9534f; font-size: 11px;")
+
     def open_model_manager(self):
         dlg = ModelManagerDialog(self)
         dlg.exec()
 
     def save_llm_settings(self):
         cfg = self.config
-        if "llm" not in cfg: cfg["llm"] = {}
-        
-        cfg["llm"]["provider"] = self.provider_combo.currentText()
+        if "llm" not in cfg:
+            cfg["llm"] = {}
+
         cfg["llm"]["api_key"] = self.api_key_input.text().strip()
+        cfg["llm"]["openai_api_key"] = self.openai_key_input.text().strip()
+        cfg["llm"]["anthropic_api_key"] = self.anthropic_key_input.text().strip()
         cfg["llm"]["local_model_dir"] = self.txt_llm_path.text()
         cfg["llm"]["cache_dir"] = self.txt_cache_path.text()
-        
+
         ConfigManager.save_config(cfg)
+        self.llm_settings_saved.emit()
         QMessageBox.information(self, "Settings Saved", "LLM settings updated successfully!")
 
     def create_image_section(self):
@@ -748,61 +1003,12 @@ class SettingsView(QScrollArea):
 
 
     def create_remote_section(self):
-        group = QGroupBox("Remote Resources & Cloud Storage")
+        """Cloud Memory / Storage Credentials only (External GPU moved to Cloud GPU section)."""
+        group = QGroupBox("Cloud Storage")
         layout = QVBoxLayout(group)
         layout.setSpacing(15)
         layout.setContentsMargins(20, 35, 20, 20)
 
-        # =======================================================
-        # 1. EXTERNAL GPU WORKER (CONNECT TO...)
-        # =======================================================
-        layout.addWidget(QLabel("External GPU Worker (Client Mode):"))
-        layout.addWidget(QLabel("Connect to an external RunPod or Desktop GPU."))
-
-        gpu_row = QHBoxLayout()
-
-        # Endpoint
-        endpoint_layout = QVBoxLayout()
-        endpoint_layout.addWidget(QLabel("Endpoint URL / IP:"))
-        self.gpu_ip_input = QLineEdit()
-        self.gpu_ip_input.setPlaceholderText("wss://runpod-id... or 192.168.1.X")
-        endpoint_layout.addWidget(self.gpu_ip_input)
-
-        # Port
-        port_layout = QVBoxLayout()
-        port_layout.addWidget(QLabel("Port:"))
-        self.gpu_port_input = QLineEdit()
-        self.gpu_port_input.setPlaceholderText("8188")
-        self.gpu_port_input.setFixedWidth(80)
-        port_layout.addWidget(self.gpu_port_input)
-
-        gpu_row.addLayout(endpoint_layout)
-        gpu_row.addLayout(port_layout)
-        layout.addLayout(gpu_row)
-
-        # Auth & Test
-        auth_row = QHBoxLayout()
-        self.gpu_auth_input = QLineEdit()
-        self.gpu_auth_input.setPlaceholderText("Worker Auth Key (Optional)")
-        self.gpu_auth_input.setEchoMode(QLineEdit.Password)
-        auth_row.addWidget(self.gpu_auth_input)
-
-        test_gpu_btn = QPushButton("Test Connection")
-        test_gpu_btn.setProperty("class", "test-btn")
-        test_gpu_btn.clicked.connect(lambda: self.run_test("GPU Worker"))
-        auth_row.addWidget(test_gpu_btn)
-
-        layout.addLayout(auth_row)
-
-        # Separator
-        line = QFrame()
-        line.setFrameShape(QFrame.HLine)
-        line.setStyleSheet("background-color: #333; margin: 15px 0;")
-        layout.addWidget(line)
-
-        # =======================================================
-        # 2. CLOUD MEMORY CREDENTIALS
-        # =======================================================
         layout.addWidget(QLabel("Cloud Memory / Storage Credentials:"))
         layout.addWidget(QLabel("Configure keys for Cloudflare R2, S3, or Network Drives."))
 
@@ -831,7 +1037,7 @@ class SettingsView(QScrollArea):
         layout.addLayout(storage_auth_row)
 
         # Apply
-        apply_btn = QPushButton("Apply Remote Settings")
+        apply_btn = QPushButton("Apply Storage Settings")
         apply_btn.setObjectName("ApplyBtn")
         layout.addWidget(apply_btn, 0, Qt.AlignRight)
 

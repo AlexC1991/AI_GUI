@@ -72,7 +72,7 @@ class SearchWorker(QThread):
         except requests.ConnectionError:
             raise Exception(
                 "Iron Desktop Service not running. "
-                "Start it from Settings or run: python Vox_IronGate/iron_desktop.py"
+                "Start it from Settings or run: python gateway/iron_desktop.py"
             )
         except requests.Timeout:
             raise Exception("Search timed out. Try again.")

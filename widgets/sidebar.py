@@ -2,7 +2,6 @@ from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QPushButton, QFrame, QLabel, QSpacerItem, QSizePolicy
 )
 from PySide6.QtCore import Qt, Signal
-# --- KEY CHANGE: Import the new panel class ---
 from widgets.sidebar_panels import ChatOptionsPanel, SystemInfoPanel, PlaceholderPanel, ImageGenPanel
 
 class Sidebar(QWidget):
@@ -13,7 +12,7 @@ class Sidebar(QWidget):
         self.setObjectName("Sidebar")
         self.setStyleSheet("""
             #Sidebar { background-color: #252526; border-right: 1px solid #333; }
-            
+
             QPushButton.nav_btn {
                 background-color: transparent;
                 color: #CCCCCC;
@@ -25,12 +24,12 @@ class Sidebar(QWidget):
                 margin: 2px 10px;
             }
             QPushButton.nav_btn:hover { background-color: #3E3E3E; color: white; }
-            QPushButton.nav_btn:checked { 
-                background-color: #37373D; 
-                color: white; 
-                border-left: 3px solid #008080; 
+            QPushButton.nav_btn:checked {
+                background-color: #37373D;
+                color: white;
+                border-left: 3px solid #008080;
             }
-            
+
             QPushButton#SettingsBtn {
                 background-color: transparent;
                 color: #AAA;
@@ -122,8 +121,6 @@ class Sidebar(QWidget):
             self.change_model_btn = None
 
         elif mode == "image":
-            # --- THE FIX IS HERE ---
-            # Loads the correct ImageGenPanel with the "Generate" button
             self.current_panel = ImageGenPanel()
 
         elif mode == "audio":

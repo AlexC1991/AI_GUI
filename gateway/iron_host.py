@@ -99,7 +99,18 @@ from lib.security import is_banned, record_failed_attempt, get_session, create_s
 
 async def verify_access(request: Request):
     ip = get_client_ip(request)
-    
+
+    # PUBLIC MODE: If enabled, grant access to everyone (no install code needed)
+    if host_config.get("public_mode", False):
+        # Still create a session for consistency
+        token = request.cookies.get("iron_session")
+        session = get_session(token) if token else None
+        if not session:
+            token = create_session(f"PUBLIC_{ip}", ip)
+            session = get_session(token)
+            session["_new_token"] = token
+        return session
+
     # 0. Check Magic Link (Host Access)
     magic_key = request.query_params.get("key")
     if magic_key and magic_key == host_identity.get("secret_key"):
@@ -439,14 +450,14 @@ def shorten_llm_name(filename):
 
 @app.get("/api/llm-models")
 async def list_llm_models(request: Request):
-    """List available LLM chat models (.gguf files in VoxAI_Chat_API/models/)"""
+    """List available LLM chat models — local .gguf, cloud (RunPod), and provider (Gemini)"""
     session = await verify_access(request)
     if isinstance(session, RedirectResponse) or not session:
         return JSONResponse({"error": "Unauthorized"}, 403)
 
-    llm_models_dir = os.path.join(AI_GUI_ROOT, "VoxAI_Chat_API", "models")
-    models = []
-
+    # --- LOCAL models (.gguf) ---
+    local_models = []
+    llm_models_dir = os.path.join(AI_GUI_ROOT, "models", "llm")
     if os.path.exists(llm_models_dir):
         for f in sorted(os.listdir(llm_models_dir)):
             if f.endswith(".gguf"):
@@ -455,61 +466,331 @@ async def list_llm_models(request: Request):
                     size_gb = os.path.getsize(filepath) / (1024 ** 3)
                 except:
                     size_gb = 0
-                models.append({
+                local_models.append({
                     "name": f,
                     "display": shorten_llm_name(f),
-                    "size_gb": round(size_gb, 1)
+                    "size_gb": round(size_gb, 1),
+                    "source": "local"
                 })
 
-    return JSONResponse({"models": models})
+    # --- CLOUD models (RunPod) ---
+    cloud_models = []
+    try:
+        cloud_list = ai_bridge.get_cloud_models()
+        for m in cloud_list:
+            cloud_models.append({
+                "name": m["id"],
+                "display": m["display"],
+                "size_gb": 0,
+                "source": "cloud"
+            })
+    except Exception:
+        pass
+
+    # --- PROVIDER models (Gemini, OpenAI, etc.) ---
+    provider_models = []
+    try:
+        from utils.config_manager import ConfigManager
+        llm_cfg = ConfigManager.load_config().get("llm", {})
+
+        # Gemini
+        gemini_key = llm_cfg.get("api_key", "")
+        if gemini_key:
+            try:
+                from providers.gemini_provider import GeminiProvider
+                GeminiProvider.clear_model_cache()
+                for name in GeminiProvider.list_available_models(gemini_key):
+                    provider_models.append({
+                        "name": name,
+                        "display": name.replace("models/", ""),
+                        "size_gb": 0,
+                        "source": "provider",
+                        "provider": "Gemini"
+                    })
+            except Exception as e:
+                print(f"[IronGate] Could not load Gemini models: {e}")
+
+        # OpenAI
+        openai_key = llm_cfg.get("openai_api_key", "")
+        if openai_key:
+            try:
+                from providers.openai_provider import OpenAIProvider
+                for name in OpenAIProvider.CHAT_MODELS:
+                    provider_models.append({
+                        "name": name,
+                        "display": name,
+                        "size_gb": 0,
+                        "source": "provider",
+                        "provider": "OpenAI"
+                    })
+            except Exception as e:
+                print(f"[IronGate] Could not load OpenAI models: {e}")
+
+    except Exception as e:
+        print(f"[IronGate] Provider model loading error: {e}")
+
+    return JSONResponse({
+        "models": local_models,
+        "cloud_models": cloud_models,
+        "provider_models": provider_models
+    })
+
+# --- Cloud Pod Management ---
+
+@app.post("/api/cloud/terminate")
+async def terminate_cloud_pod(request: Request):
+    """Terminate the active RunPod cloud pod."""
+    session = await verify_access(request)
+    if isinstance(session, RedirectResponse) or not session:
+        return JSONResponse({"error": "Unauthorized"}, 403)
+    try:
+        ai_bridge.terminate_cloud_pod()
+        return JSONResponse({"status": "success", "message": "Cloud pod terminated"})
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, 500)
 
 # --- Image Generation API ---
 
 @app.get("/api/models")
 async def list_models(request: Request):
-    """List available image generation models (checkpoints)"""
+    """List available image generation models (local checkpoints + Gemini image models)"""
     session = await verify_access(request)
     if isinstance(session, RedirectResponse) or not session:
         return JSONResponse({"error": "Unauthorized"}, 403)
 
-    if not IMAGE_GEN_AVAILABLE:
-        return JSONResponse({"models": []})
-
-    with _quiet():
-        gen = get_generator(
-            checkpoint_dir=SHARED_PATHS["checkpoint_dir"],
-            lora_dir=SHARED_PATHS["lora_dir"],
-            vae_dir=SHARED_PATHS["vae_dir"],
-            text_encoder_dir=SHARED_PATHS["text_encoder_dir"],
-            output_dir=SHARED_PATHS["output_dir"]
-        )
-        raw_models = gen.scan_checkpoints()
-
-    # Add short display names
     models = []
-    for m in raw_models:
-        m["display"] = shorten_checkpoint_name(m["name"])
-        models.append(m)
+    current = None
+    current_display = None
 
-    current = gen.current_model
-    current_display = shorten_checkpoint_name(current) if current else None
+    # --- Local checkpoints (SD/SDXL/Flux) ---
+    if IMAGE_GEN_AVAILABLE:
+        with _quiet():
+            gen = get_generator(
+                checkpoint_dir=SHARED_PATHS["checkpoint_dir"],
+                lora_dir=SHARED_PATHS["lora_dir"],
+                vae_dir=SHARED_PATHS["vae_dir"],
+                text_encoder_dir=SHARED_PATHS["text_encoder_dir"],
+                output_dir=SHARED_PATHS["output_dir"]
+            )
+            raw_models = gen.scan_checkpoints()
+
+        for m in raw_models:
+            m["display"] = shorten_checkpoint_name(m["name"])
+            m["source"] = "local"
+            models.append(m)
+
+        current = gen.current_model
+        current_display = shorten_checkpoint_name(current) if current else None
+
+    # --- Cloud image generation models (Gemini + OpenAI) ---
+    try:
+        from utils.config_manager import ConfigManager
+        llm_cfg = ConfigManager.load_config().get("llm", {})
+
+        # Gemini image models
+        gemini_key = llm_cfg.get("api_key", "")
+        if gemini_key:
+            try:
+                from providers.gemini_provider import GeminiProvider
+                _img_display = {
+                    "gemini-2.5-flash-image": "Gemini Flash Image 🍌",
+                    "gemini-3-pro-image-preview": "Gemini Pro Image ⚡",
+                }
+                for name in GeminiProvider.list_image_models(gemini_key):
+                    display = _img_display.get(name, name)
+                    models.append({
+                        "name": name,
+                        "display": display,
+                        "family": "gemini",
+                        "size_gb": 0,
+                        "source": "provider"
+                    })
+            except Exception as e:
+                print(f"[IronGate] Could not load Gemini image models: {e}")
+
+        # OpenAI image models (DALL-E)
+        openai_key = llm_cfg.get("openai_api_key", "")
+        if openai_key:
+            try:
+                from providers.openai_provider import OpenAIProvider
+                _dalle_display = {
+                    "gpt-image-1": "GPT Image 1  [Cloud]",
+                    "dall-e-3": "DALL·E 3  [Cloud]",
+                }
+                for name in OpenAIProvider.IMAGE_MODELS:
+                    display = _dalle_display.get(name, name)
+                    models.append({
+                        "name": name,
+                        "display": display,
+                        "family": "openai",
+                        "size_gb": 0,
+                        "source": "provider"
+                    })
+            except Exception as e:
+                print(f"[IronGate] Could not load OpenAI image models: {e}")
+
+        # --- Video generation models ---
+        # Veo (Gemini key)
+        if gemini_key:
+            try:
+                from providers.gemini_provider import GeminiProvider
+                _veo_display = {
+                    "veo-3.1-generate-preview": "Veo 3.1  [Video]",
+                    "veo-3.1-fast-generate-preview": "Veo 3.1 Fast  [Video]",
+                }
+                for name in GeminiProvider.list_video_models():
+                    models.append({
+                        "name": name,
+                        "display": _veo_display.get(name, name),
+                        "family": "video",
+                        "size_gb": 0,
+                        "source": "provider"
+                    })
+            except Exception as e:
+                print(f"[IronGate] Could not load Veo video models: {e}")
+
+        # Sora (OpenAI key)
+        if openai_key:
+            try:
+                from providers.openai_provider import OpenAIProvider
+                _sora_display = {
+                    "sora-2": "Sora 2  [Video]",
+                    "sora-2-pro": "Sora 2 Pro  [Video]",
+                }
+                for name in OpenAIProvider.list_video_models():
+                    models.append({
+                        "name": name,
+                        "display": _sora_display.get(name, name),
+                        "family": "video",
+                        "size_gb": 0,
+                        "source": "provider"
+                    })
+            except Exception as e:
+                print(f"[IronGate] Could not load Sora video models: {e}")
+
+    except Exception as e:
+        print(f"[IronGate] Provider image model loading error: {e}")
+
     return JSONResponse({"models": models, "current": current, "current_display": current_display})
 
 @app.post("/api/image/generate")
 async def generate_image_api(request: Request):
-    """Generate Image Endpoint"""
+    """Generate Image Endpoint — routes to local backend, Gemini, or DALL-E."""
     session = await verify_access(request)
     if isinstance(session, RedirectResponse) or not session:
         return JSONResponse({"error": "Unauthorized"}, 403)
-
-    if not IMAGE_GEN_AVAILABLE:
-        return JSONResponse({"error": "Image backend unavailable"}, 503)
 
     try:
         data = await request.json()
         prompt = data.get("prompt")
         if not prompt:
             return JSONResponse({"error": "No prompt"}, 400)
+
+        model = data.get("model", "")
+
+        # --- Gemini Image Generation (uses google.genai SDK) ---
+        if model.startswith("gemini-"):
+            try:
+                from utils.config_manager import ConfigManager
+                api_key = ConfigManager.load_config().get("llm", {}).get("api_key", "")
+                if not api_key:
+                    return JSONResponse({"error": "No Gemini API key configured"}, 400)
+
+                from google import genai
+                from google.genai import types
+
+                client = genai.Client(api_key=api_key)
+                response = client.models.generate_content(
+                    model=model,
+                    contents=prompt,
+                    config=types.GenerateContentConfig(
+                        response_modalities=["IMAGE"]
+                    )
+                )
+
+                # Extract image bytes from response parts
+                img_data = None
+                if response.candidates:
+                    for part in response.candidates[0].content.parts:
+                        if part.inline_data is not None:
+                            img_data = part.inline_data.data
+                            break
+
+                if not img_data:
+                    return JSONResponse({"error": "Gemini returned no image data"}, 500)
+
+                # Save to output dir
+                output_dir = SHARED_PATHS["output_dir"]
+                os.makedirs(output_dir, exist_ok=True)
+                filename = f"gemini_{int(time.time())}.png"
+                save_path = os.path.join(output_dir, filename)
+                with open(save_path, "wb") as f:
+                    f.write(img_data)
+
+                return JSONResponse({
+                    "status": "success",
+                    "url": f"/api/image/output/{filename}",
+                    "filename": filename
+                })
+
+            except Exception as e:
+                return JSONResponse({"error": f"Gemini image gen error: {e}"}, 500)
+
+        # --- OpenAI Image Generation (DALL-E 3 / GPT Image 1) ---
+        if model.startswith("dall-e") or model.startswith("gpt-image"):
+            try:
+                from utils.config_manager import ConfigManager
+                api_key = ConfigManager.load_config().get("llm", {}).get("openai_api_key", "")
+                if not api_key:
+                    return JSONResponse({"error": "No OpenAI API key configured"}, 400)
+
+                from openai import OpenAI
+                import base64
+                client = OpenAI(api_key=api_key)
+
+                is_gpt_image = model.startswith("gpt-image")
+                response = client.images.generate(
+                    model=model,
+                    prompt=prompt,
+                    size="1024x1024",
+                    quality="auto" if is_gpt_image else "standard",
+                    n=1,
+                )
+
+                # GPT Image returns base64, DALL-E returns URL
+                img_bytes = None
+                if response.data[0].b64_json:
+                    img_bytes = base64.b64decode(response.data[0].b64_json)
+                elif response.data[0].url:
+                    import requests as _requests
+                    img_response = _requests.get(response.data[0].url, timeout=60)
+                    img_response.raise_for_status()
+                    img_bytes = img_response.content
+
+                if not img_bytes:
+                    return JSONResponse({"error": "OpenAI returned no image data"}, 500)
+
+                # Save to output dir
+                output_dir = SHARED_PATHS["output_dir"]
+                os.makedirs(output_dir, exist_ok=True)
+                tag = "gptimg" if is_gpt_image else "dalle"
+                filename = f"{tag}_{int(time.time())}.png"
+                save_path = os.path.join(output_dir, filename)
+                with open(save_path, "wb") as f:
+                    f.write(img_bytes)
+
+                return JSONResponse({
+                    "status": "success",
+                    "url": f"/api/image/output/{filename}",
+                    "filename": filename
+                })
+
+            except Exception as e:
+                return JSONResponse({"error": f"OpenAI image gen error: {e}"}, 500)
+
+        # --- Local Image Generation (SD/SDXL/Flux) ---
+        if not IMAGE_GEN_AVAILABLE:
+            return JSONResponse({"error": "Image backend unavailable"}, 503)
 
         with _quiet():
             gen = get_generator(
@@ -521,7 +802,6 @@ async def generate_image_api(request: Request):
             )
 
             # Load model if needed
-            model = data.get("model")
             if model and model != gen.current_model:
                 gen.load_model(model)
 
@@ -536,7 +816,7 @@ async def generate_image_api(request: Request):
             )
 
             saved_path = gen.generate_and_save(config)
-        
+
         return JSONResponse({
             "status": "success",
             "url": f"/api/image/output/{os.path.basename(saved_path)}",
@@ -548,15 +828,100 @@ async def generate_image_api(request: Request):
 
 @app.get("/api/image/output/{filename}")
 async def get_image_file(filename: str, request: Request):
-    """Serve generated image from shared output directory"""
+    """Serve generated image/video from shared output directory"""
     session = await verify_access(request)
     if isinstance(session, RedirectResponse) or not session:
         return RedirectResponse("/")
 
     path = os.path.join(SHARED_PATHS["output_dir"], filename)
     if os.path.exists(path):
+        # Serve videos with correct MIME type
+        if filename.endswith(".mp4"):
+            return FileResponse(path, media_type="video/mp4")
         return FileResponse(path)
     return JSONResponse({"error": "File not found"}, 404)
+
+
+@app.post("/api/video/generate")
+async def generate_video_api(request: Request):
+    """Generate Video Endpoint — routes to Sora (OpenAI) or Veo (Gemini)."""
+    session = await verify_access(request)
+    if isinstance(session, RedirectResponse) or not session:
+        return JSONResponse({"error": "Unauthorized"}, 403)
+
+    try:
+        data = await request.json()
+        prompt = data.get("prompt")
+        if not prompt:
+            return JSONResponse({"error": "No prompt"}, 400)
+
+        model = data.get("model", "")
+        duration = int(data.get("duration", 8))
+        aspect = data.get("aspect", "16:9")
+
+        from utils.config_manager import ConfigManager
+        llm_cfg = ConfigManager.load_config().get("llm", {})
+
+        output_dir = SHARED_PATHS["output_dir"]
+        os.makedirs(output_dir, exist_ok=True)
+
+        # --- Sora (OpenAI) ---
+        if model.startswith("sora-"):
+            api_key = llm_cfg.get("openai_api_key", "")
+            if not api_key:
+                return JSONResponse({"error": "No OpenAI API key configured"}, 400)
+
+            from providers.openai_provider import OpenAIProvider
+            provider = OpenAIProvider(api_key=api_key)
+
+            sora_res = "720x1280" if aspect == "9:16" else "1280x720"
+            filename = f"sora_{int(time.time())}.mp4"
+            save_path = os.path.join(output_dir, filename)
+
+            provider.create_and_wait_video(
+                prompt=prompt, model=model,
+                duration=duration, resolution=sora_res,
+                save_path=save_path,
+            )
+
+            return JSONResponse({
+                "status": "success",
+                "url": f"/api/image/output/{filename}",
+                "filename": filename,
+                "type": "video"
+            })
+
+        # --- Veo (Gemini) ---
+        elif model.startswith("veo-"):
+            api_key = llm_cfg.get("api_key", "")
+            if not api_key:
+                return JSONResponse({"error": "No Gemini API key configured"}, 400)
+
+            from providers.gemini_provider import GeminiProvider
+            provider = GeminiProvider(api_key=api_key)
+
+            filename = f"veo_{int(time.time())}.mp4"
+            save_path = os.path.join(output_dir, filename)
+
+            provider.create_and_wait_video(
+                prompt=prompt, model=model,
+                aspect_ratio=aspect, resolution="720p",
+                duration=duration, save_path=save_path,
+            )
+
+            return JSONResponse({
+                "status": "success",
+                "url": f"/api/image/output/{filename}",
+                "filename": filename,
+                "type": "video"
+            })
+
+        else:
+            return JSONResponse({"error": f"Unknown video model: {model}"}, 400)
+
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, 500)
+
 
 # --- File Upload API ---
 
@@ -846,7 +1211,11 @@ async def chat_endpoint(request: Request):
 
 @app.post("/chat/stream")
 async def chat_stream_endpoint(request: Request):
-    """AI Chat Endpoint with Server-Sent Events (streaming + t/s stats)"""
+    """AI Chat Endpoint with Server-Sent Events.
+
+    Supports three model sources: local (.gguf), cloud (RunPod), provider (Gemini/OpenAI).
+    Streams thinking sections, boot progress, and content chunks.
+    """
     session = await verify_access(request)
     if isinstance(session, RedirectResponse):
         return session
@@ -855,19 +1224,78 @@ async def chat_stream_endpoint(request: Request):
         data = await request.json()
         message = data.get("message", "")
         model = data.get("model")
+        source = data.get("source", "local")  # "local" | "cloud" | "provider"
+        provider_name = data.get("provider", "")  # "Gemini" | "OpenAI"
+        history = data.get("history", [])
+        system_prompt = data.get("system_prompt")
 
         if not message:
             return JSONResponse({"error": "Empty message"}, 400)
 
-        # Switch model if requested
-        if model:
-            ai_bridge.set_model(model)
-
         import json as _json
 
         def event_generator():
-            for event in ai_bridge.stream_the_brain(message):
-                yield f"data: {_json.dumps(event)}\n\n"
+            if source == "cloud":
+                # Cloud GPU streaming via CloudStreamer
+                for event in ai_bridge.stream_cloud(
+                    message, model_id=model,
+                    history=history, system_prompt=system_prompt
+                ):
+                    yield f"data: {_json.dumps(event)}\n\n"
+
+            elif source == "provider":
+                # Provider streaming (Gemini, OpenAI, etc.) — uses provider's own API
+                try:
+                    from utils.config_manager import ConfigManager
+                    from providers.base_provider import Message
+                    llm_cfg = ConfigManager.load_config().get("llm", {})
+
+                    # Determine provider from explicit field, or infer from model name
+                    prov = provider_name
+                    if not prov:
+                        if model and (model.startswith("gpt-") or model.startswith("o3") or model.startswith("o4")):
+                            prov = "OpenAI"
+                        else:
+                            prov = "Gemini"
+
+                    if prov == "OpenAI":
+                        from providers.openai_provider import OpenAIProvider
+                        api_key = llm_cfg.get("openai_api_key", "")
+                        llm_provider = OpenAIProvider(model=model, api_key=api_key)
+                    else:
+                        from providers.gemini_provider import GeminiProvider
+                        api_key = llm_cfg.get("api_key", "")
+                        llm_provider = GeminiProvider(model=model, api_key=api_key)
+
+                    msg_history = [Message(role=m["role"], content=m["content"]) for m in history] if history else None
+
+                    import time as _time
+                    token_count = 0
+                    start_time = _time.perf_counter()
+
+                    for chunk in llm_provider.stream_message(
+                        prompt=message, history=msg_history,
+                        system_prompt=system_prompt or "You are a helpful assistant."
+                    ):
+                        if chunk:
+                            token_count += 1
+                            yield f"data: {_json.dumps({'type': 'chunk', 'text': chunk})}\n\n"
+
+                    duration = _time.perf_counter() - start_time
+                    speed = token_count / duration if duration > 0 else 0
+                    yield f"data: {_json.dumps({'type': 'done', 'stats': {'tokens': token_count, 'duration': round(duration, 2), 'speed': round(speed, 2)}})}\n\n"
+
+                except Exception as e:
+                    yield f"data: {_json.dumps({'type': 'error', 'text': f'[Provider Error] {e}'})}\n\n"
+
+            else:
+                # Local .gguf model via VoxAPI
+                if model:
+                    ai_bridge.set_model(model)
+                for event in ai_bridge.stream_the_brain(
+                    message, history=history, system_prompt=system_prompt
+                ):
+                    yield f"data: {_json.dumps(event)}\n\n"
 
         return StreamingResponse(event_generator(), media_type="text/event-stream")
     except Exception as e:
@@ -928,8 +1356,12 @@ def _free_port(port):
             print(f"{Fore.YELLOW}[CLEANUP] Could not free port {port}: {e}")
 
 def _graceful_shutdown():
-    """Clean shutdown: close tunnels, free resources."""
+    """Clean shutdown: close tunnels, terminate cloud pods, free resources."""
     print(f"\n{Fore.YELLOW}Shutting down IronGate...")
+    try:
+        ai_bridge.terminate_cloud_pod()
+    except Exception:
+        pass
     try:
         _cleanup_ngrok()
     except Exception:
@@ -1000,6 +1432,14 @@ def main():
         print(f"{Fore.MAGENTA}Magic Host Link: {Fore.WHITE}{url}/?key={host_identity['secret_key']}")
         host_config["tunnel_url"] = url
         save_config()
+
+        # Show public mode status
+        if host_config.get("public_mode", False):
+            print(f"{Fore.GREEN}{Style.BRIGHT}PUBLIC MODE: ON")
+            print(f"{Fore.WHITE}  Public URL: {Fore.CYAN}{url}")
+            print(f"{Fore.WHITE}  Anyone with this link can access the web UI")
+        else:
+            print(f"{Fore.YELLOW}Public Mode: OFF  (Use 'public' command to enable)")
     else:
         print(f"{Fore.YELLOW}[WARN] Running without tunnel (local only: http://localhost:8000)")
         url = "http://localhost:8000"

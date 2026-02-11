@@ -2,7 +2,7 @@
 VOX-AI Backend Patcher
 
 This script REPLACES the bundled llama.cpp DLLs inside llama-cpp-python
-with YOUR custom optimized DLLs from VoxAI_Chat_API.
+with YOUR custom optimized DLLs from the engine/ directory.
 
 Run this ONCE after installing llama-cpp-python, and again if you update
 the pip package.
@@ -37,12 +37,12 @@ def main():
     print("=" * 60)
     print()
     
-    # Find source DLLs (VoxAI_Chat_API)
+    # Find source DLLs (engine/)
     script_dir = Path(__file__).parent.absolute()
-    vox_api_dir = script_dir / "VoxAI_Chat_API"
-    
+    vox_api_dir = script_dir / "engine"
+
     if not vox_api_dir.exists():
-        print(f"[ERROR] VoxAI_Chat_API not found at: {vox_api_dir}")
+        print(f"[ERROR] engine/ not found at: {vox_api_dir}")
         print("        Make sure this script is in your AI_GUI root folder.")
         return 1
     

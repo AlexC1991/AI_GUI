@@ -16,9 +16,9 @@ import time
 from typing import Generator
 from providers.base_provider import BaseProvider, ProviderStatus, Message
 
-# Path to VoxAI API (one level up from providers/, then into VoxAI_Chat_API/)
+# Path to engine (one level up from providers/, then into engine/)
 VOX_API_PATH = os.path.abspath(
-    os.path.join(os.path.dirname(__file__), "..", "VoxAI_Chat_API")
+    os.path.join(os.path.dirname(__file__), "..", "engine")
 )
 
 # Add to Python path if not already there
@@ -58,6 +58,7 @@ class VoxProvider(BaseProvider):
     def __init__(self, model_name=None):
         self.engine = None
         self.init_error = None
+
         self.status = ProviderStatus(
             available=False, 
             message="Initializing...", 
@@ -68,7 +69,7 @@ class VoxProvider(BaseProvider):
         if not _lazy_load_vox_api():
             self.status = ProviderStatus(
                 available=False, 
-                message="VoxAI API not found. Ensure 'VoxAI_Chat_API' folder exists.",
+                message="VoxAI API not found. Ensure 'engine' folder exists.",
                 model=None
             )
             return
@@ -119,7 +120,9 @@ class VoxProvider(BaseProvider):
 
     def _resolve_model(self, name: str) -> str:
         """Find the actual .gguf file for a given name (short or long)."""
-        models_dir = os.path.join(VOX_API_PATH, "models")
+        # Models now live in models/llm/ at project root
+        root_dir = os.path.dirname(VOX_API_PATH)
+        models_dir = os.path.join(root_dir, "models", "llm")
         if not os.path.exists(models_dir):
             return None
         
@@ -170,31 +173,6 @@ class VoxProvider(BaseProvider):
         self._sync_history(history, system_prompt)
         return self.engine.chat(prompt, stream=False)
 
-    def stream_message(self, prompt: str, history: list[Message] = None, 
-                       system_prompt: str = None) -> Generator[str, None, None]:
-        """Stream a message response token by token."""
-        if self.init_error:
-            raise RuntimeError(f"Engine failed: {self.init_error}")
-        if not self.engine:
-            raise RuntimeError("VoxAI Engine is not loaded.")
-            
-        self._sync_history(history, system_prompt)
-        
-        # Track performance
-        start_time = time.perf_counter()
-        token_count = 0
-        
-        for chunk in self.engine.chat(prompt, stream=True):
-            token_count += 1
-            yield chunk
-            
-        # Log performance stats
-        duration = time.perf_counter() - start_time
-        if duration > 0:
-            speed = token_count / duration
-            mode_info = "(CPU fallback)" if self.engine.using_fallback else ""
-            print(f"[VoxAI] {speed:.2f} t/s ({token_count} tokens, {duration:.2f}s) {mode_info}")
-
     def get_status(self) -> ProviderStatus:
         """Get the current provider status."""
         return self.status
@@ -214,20 +192,15 @@ class VoxProvider(BaseProvider):
         if self.engine:
             self.engine.set_session(session_id)
 
-    def _sync_history(self, history: list[Message], system_prompt: str):
-        """Sync conversation history to the engine.
+    def set_cloud_mode(self, enabled: bool, *args, **kwargs):
+        """No-op stub — cloud is now handled by CloudStreamer."""
+        pass
 
-        When Elastic Memory is active, the ContextManager handles history
-        assembly via RAG retrieval. However, if explicit history is passed
-        (e.g., after a search injection), we sync it to the engine.
-        
-        NOTE: The _search_injected flag must be set EXTERNALLY by the caller
-        (ChatAgent) when injecting search results. This function does NOT
-        auto-detect search injection.
-        """
+    def _sync_history(self, history: list[Message], system_prompt: str):
+        """Sync conversation history to the engine."""
         if hasattr(self.engine, '_elastic_enabled') and self.engine._elastic_enabled:
+            # ... (Elastic Logic) ...
             if history and len(history) > 0:
-                # Sync history to the engine
                 self.engine.history = []
                 sys_prompt = system_prompt or "You are a helpful assistant."
                 self.engine.history.append({"role": "system", "content": sys_prompt})
@@ -239,19 +212,37 @@ class VoxProvider(BaseProvider):
                 print(f"[VoxProvider] Synced {len(history)} history items")
                 return
             else:
-                # No explicit history - let ContextManager handle it
                 self.engine.history = []
                 return
 
         # Classic mode: full history rebuild
         self.engine.clear_history()
-
         sys_prompt = system_prompt or "You are a helpful assistant."
         self.engine.history.append({"role": "system", "content": sys_prompt})
-
         if history:
             for msg in history:
-                self.engine.history.append({
-                    "role": msg.role,
-                    "content": msg.content
-                })
+                self.engine.history.append({"role": msg.role, "content": msg.content})
+
+    def stream_message(self, prompt: str, history: list[Message] = None,
+                       system_prompt: str = None) -> Generator[str, None, None]:
+        """Stream a message response token by token (Local only)."""
+        if self.init_error:
+            raise RuntimeError(f"Engine failed: {self.init_error}")
+
+        if not self.engine:
+            raise RuntimeError("VoxAI Engine is not loaded.")
+            
+        self._sync_history(history, system_prompt)
+        
+        start_time = time.perf_counter()
+        token_count = 0
+        
+        for chunk in self.engine.chat(prompt, stream=True):
+            token_count += 1
+            yield chunk
+            
+        duration = time.perf_counter() - start_time
+        if duration > 0:
+            speed = token_count / duration
+            mode_info = "(CPU fallback)" if self.engine.using_fallback else ""
+            print(f"[VoxAI] {speed:.2f} t/s ({token_count} tokens, {duration:.2f}s) {mode_info}")

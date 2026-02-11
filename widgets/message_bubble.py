@@ -27,50 +27,33 @@ class AutoResizingTextBrowser(QTextBrowser):
 
     def update_size(self):
         doc = self.document()
-        layout = doc.documentLayout()
+        plain = doc.toPlainText().strip()
 
-        # 1. Measure Natural Width
-        doc.setTextWidth(-1)
-        ideal_width = doc.idealWidth()
+        from PySide6.QtGui import QFontMetrics, QFont
+        fm = QFontMetrics(QFont("Segoe UI", 14))
 
-        # 2. YOUR LIMITS
         max_w = 500
-        min_w = 10
+        min_w = 60
 
-        padding = 30
-
-        final_width = ideal_width + padding
-
-        if final_width > max_w:
-            final_width = max_w
-        if final_width < min_w:
-            final_width = min_w
-
-        # 3. Check Height
-        doc.setTextWidth(final_width)
-        # Use doc.size().height() which is more accurate for the set width
-        height = doc.size().height()
-        max_h = 600
-        
-        # Add buffer for descenders/line-height to prevent cutoff
-        height += 15 
-
-        # 4. Scrollbar Logic
-        if height > max_h:
-            scrollbar_width = self.style().pixelMetric(QStyle.PM_ScrollBarExtent)
-            final_width += scrollbar_width
-            
-            # Re-constrain if adding scrollbar pushed us over
-            if final_width > max_w + scrollbar_width:
-                final_width = max_w + scrollbar_width
-
-            doc.setTextWidth(final_width)
-            self.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        # --- Short message fast path (single-line, no code blocks) ---
+        # For tiny messages like "Hey", "Ok", etc. the HTML <style> block
+        # inflates idealWidth(). Use pure font metrics instead.
+        if "\n" not in plain and len(plain) < 80 and "```" not in plain:
+            text_px = fm.horizontalAdvance(plain) + 28  # horizontal padding
+            final_width = max(min_w, min(text_px, max_w))
         else:
-            self.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+            # Standard: let Qt layout the document to find natural width
+            doc.setTextWidth(-1)
+            ideal = doc.idealWidth()
+            final_width = max(min_w, min(ideal + 4, max_w))
 
-        final_height = min(height, max_h)
-        self.setFixedSize(int(final_width), int(final_height))
+        # Layout at that width to measure height
+        doc.setTextWidth(final_width)
+        height = int(doc.size().height()) + 12  # small buffer for descenders
+
+        # No scrollbar ever — show full content (user request)
+        self.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.setFixedSize(int(final_width), height)
 
 # ===================================================================
 # 2. MESSAGE BUBBLE

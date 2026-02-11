@@ -12,6 +12,8 @@ pygments
 
 # --- AI Providers ---
 google-generativeai
+google-genai
+openai
 diffusers
 transformers
 accelerate

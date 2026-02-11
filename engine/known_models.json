@@ -1,0 +1,10 @@
+{
+    "gpt-oss-20b-Q2_K.gguf": "openai/gpt-oss-20b",
+    "Qwen3-VL-8B-Instruct.gguf": "Qwen/Qwen2.5-VL-7B-Instruct",
+    "Qwen2.5-14B-Q4_K_M.gguf": "Qwen/Qwen2.5-14B-Instruct",
+    "Dolphin-Mistral-24B-Venice-Edition-q4_k_m.gguf": "warshanks/Dolphin-Mistral-24B-Venice-Edition-AWQ",
+    "Llama-3-8B-Q5.gguf": "NousResearch/Meta-Llama-3-8B-Instruct",
+    "Mistral-7B-v0.3.gguf": "mistralai/Mistral-7B-Instruct-v0.3",
+    "Midnight-Miqu-70B.awq": "cecibas/Midnight-Miqu-70B-v1.5-4bit",
+    "Qwen2.5-72B-Instruct.awq": "Qwen/Qwen2.5-72B-Instruct-AWQ"
+}

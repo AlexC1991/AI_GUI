@@ -63,6 +63,10 @@ class MainWindow(QMainWindow):
         self.image_gen_view = ImageGenView()
         self.stack.addWidget(self.image_gen_view)
 
+        # Auto-refresh image gen + provider models when LLM settings change
+        self.settings_view.llm_settings_saved.connect(self.image_gen_view.refresh_assets)
+        self.settings_view.llm_settings_saved.connect(self._load_cloud_and_provider_models)
+
         main_layout.addWidget(self.stack, 1)
 
         self.code_panel = CodePanel()
@@ -86,6 +90,13 @@ class MainWindow(QMainWindow):
         self.model_panel = ModelSelectorPanel(self)
         self.model_panel.model_selected.connect(self._on_model_selected)
         self.model_panel.hide()
+
+        # Load cloud + provider models into the 3-tab selector
+        self._load_cloud_and_provider_models()
+
+        # Persistent chat panel state (survives panel recreation on mode switch)
+        self._chat_execution_mode = "local"
+        self._chat_selected_model = None
 
         self.current_session_id = f"session_{int(time.time())}"
         print(f"[MainWindow] Persistent Session ID: {self.current_session_id}")
@@ -244,15 +255,28 @@ class MainWindow(QMainWindow):
         elif mode == "image": idx = 2
         self.stack.setCurrentIndex(idx)
         if mode != "chat": self.code_panel.slide_out()
+
+        # Hide model selector panel when switching away from chat
+        if hasattr(self, 'model_panel') and self.model_panel._is_open:
+            self.model_panel.hide_panel()
         
-        try: self.sidebar.upload_btn.clicked.disconnect()
+        try: 
+            if hasattr(self.sidebar, 'upload_btn'): self.sidebar.upload_btn.clicked.disconnect()
         except: pass
-        try: self.sidebar.clear_btn.clicked.disconnect()
+        try: 
+            if hasattr(self.sidebar, 'clear_btn'): self.sidebar.clear_btn.clicked.disconnect()
         except: pass
         
         if mode == "chat":
-            if self.sidebar.upload_btn: self.sidebar.upload_btn.clicked.connect(self.handle_upload)
-            if self.sidebar.clear_btn: self.sidebar.clear_btn.clicked.connect(self.handle_clear_chat)
+            if hasattr(self.sidebar, 'upload_btn'): self.sidebar.upload_btn.clicked.connect(self.handle_upload)
+            if hasattr(self.sidebar, 'clear_btn'): self.sidebar.clear_btn.clicked.connect(self.handle_clear_chat)
+            # Re-wire model button (panel was recreated by set_active_panel)
+            if self.sidebar.change_model_btn:
+                try: self.sidebar.change_model_btn.clicked.disconnect()
+                except: pass
+                self.sidebar.change_model_btn.clicked.connect(self._show_model_panel)
+            # Restore state to fresh panel
+            self._restore_chat_panel_state()
             QTimer.singleShot(500, self._verify_desktop_service)
 
         if mode == "image":
@@ -312,8 +336,10 @@ class MainWindow(QMainWindow):
     def handle_ollama_list(self, models):
         self._available_models = models if models else []
         panel = self.sidebar.current_panel
-        if panel and hasattr(panel, 'set_local_models'): panel.set_local_models(models)
-        if hasattr(self, 'model_panel'): self.model_panel.set_models(models)
+        if panel and hasattr(panel, 'set_local_models'):
+            panel.set_local_models(models)
+        if hasattr(self, 'model_panel'):
+            self.model_panel.set_local_models(models)
 
     def handle_ollama_error(self, err):
         print(f"[DEBUG] Ollama Error: {err}")
@@ -322,14 +348,48 @@ class MainWindow(QMainWindow):
 
     def _show_model_panel(self):
         panel_rect = QRect(self.sidebar.width(), 0, self.model_panel.panel_width, self.height())
-        if hasattr(self, '_available_models'): self.model_panel.set_models(self._available_models)
+        # Refresh local models
+        if hasattr(self, '_available_models'):
+            self.model_panel.set_local_models(self._available_models)
+        # Refresh cloud + provider models
+        self._load_cloud_and_provider_models()
+        # Set active tab to match current execution mode
+        panel = self.sidebar.current_panel
+        if panel and hasattr(panel, 'execution_mode'):
+            self.model_panel.set_active_tab(panel.execution_mode)
         self.model_panel.toggle_panel(panel_rect)
 
     def _on_model_selected(self, model_data):
-        print(f"[DEBUG] Model Selected: {model_data}")
+        mode = model_data.get("mode", "local")
+        display = model_data.get("display", "Unknown")
+        print(f"[MainWindow] Model Selected: {display} (mode={mode})")
+
+        # Save state on MainWindow (survives panel recreation)
+        self._chat_execution_mode = mode
+        self._chat_selected_model = model_data
+
+        # Update sidebar panel with execution mode + model
         panel = self.sidebar.current_panel
-        if panel and hasattr(panel, 'set_selected_model'):
-            panel.set_selected_model(model_data)
+        if panel and hasattr(panel, 'set_execution_mode'):
+            panel.set_execution_mode(mode, model_data)
+
+        # Update chat worker with execution mode
+        if hasattr(self, 'chat_worker') and hasattr(self.chat_worker, 'set_execution_mode'):
+            self.chat_worker.set_execution_mode(mode, model_data)
+
+    def _restore_chat_panel_state(self):
+        """Restore execution mode, model, and local models to newly created ChatOptionsPanel."""
+        panel = self.sidebar.current_panel
+        if not panel or not hasattr(panel, 'set_execution_mode'):
+            return
+
+        # Restore local models cache
+        if hasattr(self, '_available_models') and self._available_models:
+            panel.set_local_models(self._available_models)
+
+        # Restore execution mode + selected model
+        if self._chat_selected_model:
+            panel.set_execution_mode(self._chat_execution_mode, self._chat_selected_model)
 
     def handle_clear_chat(self):
         self.chat_view.chat_display.clear_chat()
@@ -337,6 +397,40 @@ class MainWindow(QMainWindow):
         self.code_panel.slide_out()
         self.input_bar.clear_speed()
         
+    def _load_cloud_and_provider_models(self):
+        """Load cloud models from config and provider models from GeminiProvider."""
+        try:
+            config = ConfigManager.load_config()
+            cloud_models = config.get("cloud", {}).get("models", {})
+            if cloud_models and hasattr(self, 'model_panel'):
+                self.model_panel.set_cloud_models(cloud_models)
+        except Exception as e:
+            print(f"[MainWindow] Error loading cloud models: {e}")
+
+        try:
+            config = ConfigManager.load_config()
+            llm_cfg = config.get("llm", {})
+            all_provider_models = []
+
+            # Gemini models
+            gemini_key = llm_cfg.get("api_key", "")
+            if gemini_key:
+                from providers.gemini_provider import GeminiProvider
+                for name in GeminiProvider.list_available_models(api_key=gemini_key):
+                    all_provider_models.append({"name": name, "provider": "Gemini"})
+
+            # OpenAI models
+            openai_key = llm_cfg.get("openai_api_key", "")
+            if openai_key:
+                from providers.openai_provider import OpenAIProvider
+                for name in OpenAIProvider.list_available_models(api_key=openai_key):
+                    all_provider_models.append({"name": name, "provider": "OpenAI"})
+
+            if all_provider_models and hasattr(self, 'model_panel'):
+                self.model_panel.set_provider_models(all_provider_models)
+        except Exception as e:
+            print(f"[MainWindow] Error loading provider models: {e}")
+
     def handle_upload(self):
         file_path = self.file_handler.open_file_dialog()
         if not file_path: return
@@ -368,6 +462,11 @@ class MainWindow(QMainWindow):
 
     def _on_speed_update(self, speed, tokens, duration):
         self.input_bar.show_speed(speed, tokens, duration)
+        # Push speed to sidebar session info
+        panel = self.sidebar.current_panel
+        if panel and hasattr(panel, 'update_session_info'):
+            if self._chat_execution_mode == "local":
+                panel.update_session_info({"speed_tps": speed})
         
     # Image Gen methods (identical logic)
     def start_image_generation(self):
@@ -378,15 +477,35 @@ class MainWindow(QMainWindow):
         if panel and hasattr(panel, 'abort_btn'): panel.abort_btn.setEnabled(True)
         view.progress_bar.setValue(0)
         view.set_status("Starting generation...", "#4ade80")
+        view.start_live_stats()
         self.sidebar.update_status("processing")
         config = ConfigManager.load_config()
         img_cfg = config.get("image", {})
+        llm_cfg = config.get("llm", {})
         width, height = view.get_resolution()
         loras = view.get_active_loras()
+
+        # Pass API keys for cloud image/video models
+        gemini_key = ""
+        openai_key = ""
+        selected_model = view.get_selected_checkpoint()
+        is_video = view.is_video_selected()
+
+        # Video models (Sora needs OpenAI key, Veo needs Gemini key)
+        if is_video:
+            if selected_model.startswith("sora-"):
+                openai_key = llm_cfg.get("openai_api_key", "")
+            elif selected_model.startswith("veo-"):
+                gemini_key = llm_cfg.get("api_key", "")
+        elif view.is_gemini_selected():
+            gemini_key = llm_cfg.get("api_key", "")
+        elif view.is_openai_selected():
+            openai_key = llm_cfg.get("openai_api_key", "")
+
         self.image_worker.setup(
             prompt=view.get_positive_prompt(),
             negative_prompt=view.get_negative_prompt(),
-            model=view.get_selected_checkpoint(),
+            model=selected_model,
             width=width, height=height, steps=view.get_steps(),
             cfg_scale=view.get_cfg_scale(), seed=view.get_seed(),
             sampler=view.get_sampler(),
@@ -398,13 +517,18 @@ class MainWindow(QMainWindow):
             lora_dir=img_cfg.get("lora_dir", "models/loras"),
             vae_dir=img_cfg.get("vae_dir", "models/vae"),
             text_encoder_dir=img_cfg.get("text_encoder_dir", "models/text_encoders"),
-            output_dir=img_cfg.get("output_dir", "outputs/images")
+            output_dir=img_cfg.get("output_dir", "outputs/images"),
+            gemini_api_key=gemini_key,
+            openai_api_key=openai_key,
+            video_duration=view.get_video_duration() if is_video else 4,
+            video_aspect=view.get_video_aspect() if is_video else "16:9",
         )
         self.image_worker.start()
 
     def abort_generation(self):
         if hasattr(self, 'image_worker'):
             self.image_worker.abort()
+            self.image_gen_view.stop_live_stats()
             self._reset_gen_ui()
             self.sidebar.update_status("aborted")
             self.image_gen_view.set_status("Generation aborted", "#f59e0b")
@@ -418,17 +542,20 @@ class MainWindow(QMainWindow):
         self.image_gen_view.set_status(f"Step {step}/{total}", "#4ade80")
 
     def _on_gen_finished(self, path):
+        self.image_gen_view.stop_live_stats()
         self._reset_gen_ui()
         self.sidebar.update_status("idle")
         self.image_gen_view.set_status(f"✅ Saved: {path}", "#4ade80")
-        self.image_gen_view.show_image(path, 0)
+        self.image_gen_view.show_output(path, 0)
 
     def _on_gen_error(self, err):
+        self.image_gen_view.stop_live_stats()
         self._reset_gen_ui()
         self.sidebar.update_status("error")
         self.image_gen_view.set_status(f"❌ {err}", "#ef4444")
 
     def _on_auth_required(self, model_name):
+        self.image_gen_view.stop_live_stats()
         self._reset_gen_ui()
         self.sidebar.update_status("auth required")
         self.image_gen_view.set_status("🔐 Authentication required", "#f59e0b")
@@ -448,6 +575,15 @@ class MainWindow(QMainWindow):
 
     def closeEvent(self, event):
         print("[System] Shutting down...")
+        # KILL SWITCH: Terminate cloud pod to stop billing
+        try:
+            from backend.chat_worker import ChatWorker
+            if ChatWorker._shared_cloud_streamer and hasattr(ChatWorker._shared_cloud_streamer, 'terminate_pod'):
+                print("[System] Terminating cloud pod to stop billing...")
+                ChatWorker._shared_cloud_streamer.terminate_pod()
+        except Exception as e:
+            print(f"[System] Cloud shutdown error: {e}")
+
         if hasattr(self, '_desktop_service') and self._desktop_service.isRunning():
             self._desktop_service.stop()
             self._desktop_service.wait(3000)

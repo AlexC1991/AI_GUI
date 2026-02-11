@@ -6,7 +6,7 @@ import threading
 import time
 import sys
 from colorama import Fore, Style
-from .config import VERSION
+from .config import VERSION, host_config, save_config
 from .database import client_db, save_database
 from .client_gen import generate_client_package
 from .security import reset_ip, ban_ip, kick_client, trust_ip
@@ -34,6 +34,7 @@ def admin_loop(tunnel_url, db_callback, gen_callback):
                 print(f"{Fore.YELLOW}Available Commands:")
                 print(f"  {Fore.CYAN}users, list{Fore.WHITE}   : List all known clients and active sessions")
                 print(f"  {Fore.CYAN}gen, generate{Fore.WHITE} : Generate a new client (Usage: gen \"Name\")")
+                print(f"  {Fore.CYAN}public{Fore.WHITE}        : Toggle public access mode (no install code needed)")
                 print(f"  {Fore.CYAN}reset{Fore.WHITE}         : Reset IP ban/auth (Usage: reset <IP>)")
                 print(f"  {Fore.CYAN}ban{Fore.WHITE}           : Ban an IP manually (Usage: ban <IP>)")
                 print(f"  {Fore.CYAN}kick{Fore.WHITE}          : Kick a client (Usage: kick <ID>)")
@@ -51,6 +52,19 @@ def admin_loop(tunnel_url, db_callback, gen_callback):
                 # We need to peek at security.authenticated_ips or similar? 
                 # For now just database view is okay, but real-time sessions would be better.
                 # Assuming client_db tracks status reasonably well.
+
+            elif cmd in ["public"]:
+                current = host_config.get("public_mode", False)
+                host_config["public_mode"] = not current
+                save_config()
+                if host_config["public_mode"]:
+                    print(f"{Fore.GREEN}✓ Public access mode ENABLED")
+                    print(f"{Fore.WHITE}  Anyone with the URL can access the web UI (no install code)")
+                    if tunnel_url:
+                        print(f"{Fore.CYAN}  Public URL: {tunnel_url}")
+                else:
+                    print(f"{Fore.YELLOW}✗ Public access mode DISABLED")
+                    print(f"{Fore.WHITE}  Install code / client exe required for access")
 
             elif cmd in ["generate", "gen"]:
                 if not args:

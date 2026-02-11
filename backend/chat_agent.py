@@ -58,6 +58,7 @@ class ChatAgent(QObject):
         self.current_user_input = user_text
         self.mode_reasoning = force_reasoning
         self._search_holdback = ""
+        self._channel_buffer = ""
         
         prompt_prefix = ""
         
@@ -208,9 +209,126 @@ class ChatAgent(QObject):
         self._execute_search(query)
 
     def _on_chunk(self, chunk):
-        stop_tokens = ['|im_end|>', '<|im_end|>', '<|im_start|>', '<|eot_id|>', '<|end▁of▁sentence|>', '<|begin▁of▁sentence|>']
+        import re as _re
+
+        # --- CLOUD BOOT PROGRESS (intercept [BOOT_*] tokens before anything else) ---
+        boot_start_match = _re.match(r'^\[BOOT_START:(.+?)\]$', chunk.strip())
+        if boot_start_match:
+            model_name = boot_start_match.group(1)
+            # Determine ETA based on model size — 70B+ models take ~512s, smaller ~235s
+            is_large = bool(_re.search(r'(?:70|72|120)[Bb]', model_name))
+            self._boot_eta = 512 if is_large else 235
+            eta_mins, eta_secs = divmod(self._boot_eta, 60)
+            self.status_changed.emit("booting")
+            self._boot_indicator = self.chat_display.start_processing_indicator(
+                f"Booting {model_name}... ~{eta_mins}m {eta_secs:02d}s remaining"
+            )
+            return
+
+        boot_tick_match = _re.match(r'^\[BOOT_TICK:(\d+)\]$', chunk.strip())
+        if boot_tick_match:
+            elapsed = int(boot_tick_match.group(1))
+            if hasattr(self, '_boot_indicator') and self._boot_indicator:
+                eta = getattr(self, '_boot_eta', 235)
+                remaining = max(0, eta - elapsed)
+                mins, secs = divmod(remaining, 60)
+                label = f"~{mins}m {secs:02d}s remaining" if remaining > 0 else "Almost ready..."
+                self._boot_indicator.set_text(f"Booting cloud pod... {label}")
+            return
+
+        boot_done_match = _re.match(r'^\[BOOT_DONE:(\d+)\]$', chunk.strip())
+        if boot_done_match:
+            total = int(boot_done_match.group(1))
+            # Remove the boot indicator — first real token will start the message bubble
+            if hasattr(self, '_boot_indicator') and self._boot_indicator:
+                self.chat_display.end_processing_indicator()
+                self._boot_indicator = None
+            self.status_changed.emit("thinking")
+            return
+
+        if chunk.strip() == "[BOOT_FAIL]":
+            if hasattr(self, '_boot_indicator') and self._boot_indicator:
+                self.chat_display.end_processing_indicator()
+                self._boot_indicator = None
+            self.status_changed.emit("error")
+            # Show error as a message
+            if not hasattr(self.mw, '_chat_streaming_started') or not self.mw._chat_streaming_started:
+                self.chat_display.start_streaming_message()
+                self.mw._chat_streaming_started = True
+            self.chat_display.update_streaming_message("Cloud boot failed. Check RunPod balance and API key in Settings.")
+            return
+
+        # --- GPT-OSS CHANNEL DETECTION (must happen BEFORE token stripping) ---
+        # GPT-OSS uses: <|channel|>analysis<|message|> for thinking, <|channel|>final<|message|> for response
+        # These tokens arrive across multiple chunks, so we accumulate in a buffer
+        self._channel_buffer = getattr(self, '_channel_buffer', '') + chunk
+
+        # Check for channel switches in the accumulated buffer
+        channel_switch = _re.search(r'<\|channel\|>(analysis|commentary|final)<\|message\|>', self._channel_buffer)
+        if channel_switch:
+            channel = channel_switch.group(1)
+            # Get any text after the channel marker
+            after = self._channel_buffer[channel_switch.end():]
+            self._channel_buffer = ''
+
+            if channel in ('analysis', 'commentary'):
+                # Start thinking mode (like <think>)
+                if not self.is_thinking:
+                    self.is_thinking = True
+                    self.status_changed.emit("thinking")
+                    print(f"[Agent] Channel: {channel} (thinking)")
+                    if not self.current_thinking_widget:
+                        self.current_thinking_widget = self.chat_display.start_thinking_section()
+                # Process remaining text after marker
+                if after.strip():
+                    chunk = after
+                else:
+                    return
+            elif channel == 'final':
+                # End thinking, start visible response (like </think>)
+                if self.is_thinking:
+                    self.is_thinking = False
+                    self.status_changed.emit("idle")
+                    print(f"[Agent] Channel: final (visible)")
+                    if self.current_thinking_widget:
+                        self.chat_display.end_thinking_section(self.current_thinking_widget)
+                        self.current_thinking_widget = None
+                # Process remaining text after marker
+                if after.strip():
+                    chunk = after
+                else:
+                    return
+        else:
+            # Check if buffer might be accumulating a partial channel marker
+            if '<|channel' in self._channel_buffer and len(self._channel_buffer) < 60:
+                return  # Wait for more data
+            # No channel marker found — pass through normally
+            self._channel_buffer = ''
+
+        # Strip ALL known special tokens from all model families
+        stop_tokens = [
+            # ChatML / Qwen
+            '<|im_end|>', '|im_end|>', '<|im_start|>', '<|endoftext|>',
+            # Llama 3
+            '<|eot_id|>', '<|end_of_text|>', '<|start_header_id|>', '<|end_header_id|>',
+            # DeepSeek / Misc
+            '<|end▁of▁sentence|>', '<|begin▁of▁sentence|>',
+            # Phi / GPT-style
+            '<|end|>', '<|user|>', '<|assistant|>', '<|system|>', '<|channel|>',
+            # GPT-OSS specific
+            '<|start|>', '<|message|>', '<|call|>', '<|return|>',
+            '<|constrain|>', '<|endofprompt|>', '<|startoftext|>',
+            # Common generation artifacts
+            '>final>', '>analysis>', '>commentary>', '<|padding|>',
+        ]
         for token in stop_tokens: chunk = chunk.replace(token, '')
-        if not chunk: return
+        # Also strip any remaining <|...|> style tokens we might have missed
+        chunk = _re.sub(r'<\|[^|]*\|>', '', chunk)
+        # Strip leftover channel-like fragments (e.g. "analysis", "final" appearing alone after token strip)
+        # NOTE: Do NOT .strip() the chunk itself — vLLM tokens carry leading spaces that separate words!
+        if _re.match(r'^\s*(analysis|commentary|final)\s*$', chunk):
+            return
+        if not chunk or not chunk.strip(): return
 
         # --- SEARCH DETECTION (buffer-based) ---
         self.search_trigger_buffer += chunk
@@ -227,10 +345,18 @@ class ChatAgent(QObject):
                 # Inside <think> block — model is just reasoning about the system prompt
                 self.search_trigger_buffer = self.search_trigger_buffer[search_match.end():]
             elif is_placeholder:
-                query = self.current_user_input
-                print(f"\n[Agent] 🛑 AI SEARCH (placeholder -> user query) -> '{query}'")
-                self._trigger_search(query)
-                return
+                # Check if this is just the model echoing the system prompt instruction
+                # e.g. "You search the web by outputting [SEARCH: query]"
+                context_before = self.search_trigger_buffer[:search_match.start()].lower()
+                if "by outputting" in context_before or "outputting [search" in context_before or "search tool" in context_before:
+                    # Model is echoing instructions, not requesting a search
+                    print(f"[Agent] Ignoring system prompt echo: [SEARCH: {query}]")
+                    self.search_trigger_buffer = self.search_trigger_buffer[search_match.end():]
+                else:
+                    query = self.current_user_input
+                    print(f"\n[Agent] 🛑 AI SEARCH (placeholder -> user query) -> '{query}'")
+                    self._trigger_search(query)
+                    return
             else:
                 print(f"\n[Agent] 🛑 AI DECIDED TO SEARCH -> '{query}'")
                 self._trigger_search(query)
@@ -434,16 +560,45 @@ class ChatAgent(QObject):
 
     # Helpers
     def _get_provider_type(self):
-        if hasattr(self.mw.sidebar.current_panel, 'mode_combo'):
-            mode = self.mw.sidebar.current_panel.mode_combo.currentText()
-            if "VoxAI" in mode or "Local" in mode: return "VoxAI"
-        return "Gemini"
+        """Determine provider from execution_mode and selected model.
+        local/cloud → VoxAI (cloud path handled inside VoxProvider)
+        provider → read actual provider from model_data (Gemini, OpenAI, etc.)
+        """
+        panel = self.mw.sidebar.current_panel
+        if panel and hasattr(panel, 'execution_mode'):
+            mode = panel.execution_mode
+            if mode in ("local", "cloud"):
+                return "VoxAI"
+            elif mode == "provider":
+                model = getattr(panel, 'selected_model', None)
+                if isinstance(model, dict):
+                    return model.get("provider", "Gemini")
+                return "Gemini"
+        return "VoxAI"  # Default to local
 
     def _get_model_name(self):
-        if hasattr(self.mw.sidebar.current_panel, 'selected_model'):
-            return self.mw.sidebar.current_panel.selected_model.get("filename", "Gemini Pro")
-        return "Gemini Pro"
+        """Get model identifier based on execution mode."""
+        panel = self.mw.sidebar.current_panel
+        if panel and hasattr(panel, 'execution_mode') and hasattr(panel, 'selected_model'):
+            model = panel.selected_model
+            if not isinstance(model, dict):
+                return "gpt-4o"
+            mode = panel.execution_mode
+            if mode == "cloud":
+                return model.get("cloud_id", model.get("filename", "Unknown"))
+            elif mode == "provider":
+                return model.get("display", model.get("filename", "gpt-4o"))
+            else:  # local
+                return model.get("filename", "Unknown")
+        return "gpt-4o"
 
     def _get_api_key(self):
+        """Return the API key for the current provider."""
         from utils.config_manager import ConfigManager
-        return ConfigManager.load_config().get("llm", {}).get("api_key", "")
+        llm_cfg = ConfigManager.load_config().get("llm", {})
+        provider = self._get_provider_type()
+        if provider == "OpenAI":
+            return llm_cfg.get("openai_api_key", "")
+        elif provider == "Gemini":
+            return llm_cfg.get("api_key", "")
+        return llm_cfg.get("api_key", "")

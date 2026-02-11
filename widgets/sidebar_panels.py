@@ -95,19 +95,10 @@ class ChatOptionsPanel(QWidget):
         self.setStyleSheet("""
             QWidget { color: #CCCCCC; font-family: Segoe UI, sans-serif; font-size: 12px; background: transparent; }
             QLabel { font-weight: bold; margin-top: 5px; border: none; }
-            QPushButton, QComboBox, QSpinBox {
-                background-color: #333; border: 1px solid #444; border-radius: 4px; color: white; padding: 5px; min-height: 25px;
+            QPushButton {
+                background-color: #2E2E2E; border: 1px solid #444; border-radius: 4px; color: white; padding: 5px; min-height: 25px;
             }
-            #ModeBox, #MemoryBox, #CloudBox { padding-left: 8px; }
-            QComboBox::drop-down { border: none; }
-            QComboBox QAbstractItemView {
-                background-color: #2E2E2E; color: white; selection-background-color: #006666; min-width: 150px;
-            }
-            QSpinBox::up-button, QSpinBox::down-button { width: 0px; border: none; }
-            QPushButton { background-color: #2E2E2E; }
             QPushButton:hover { background-color: #3E3E3E; }
-            #ClearBtn { background-color: #4a0000; border: 1px solid #600000; }
-            #ClearBtn:hover { background-color: #6a0000; }
             #ChangeModelBtn { background-color: #006666; border: 1px solid #004d4d; }
             #ChangeModelBtn:hover { background-color: #008080; }
         """)
@@ -115,79 +106,91 @@ class ChatOptionsPanel(QWidget):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(10, 0, 10, 0)
         layout.setAlignment(Qt.AlignTop)
-        layout.setSpacing(10)
+        layout.setSpacing(8)
 
         layout.addWidget(QLabel("Chat Section:", styleSheet="font-size: 14px; color: #FFF;"), alignment=Qt.AlignHCenter)
 
-        layout.addWidget(QLabel("Mode:"), alignment=Qt.AlignHCenter)
-        self.mode_combo = QComboBox()
-        self.mode_combo.setObjectName("ModeBox")
-        self.mode_combo.addItems(["VoxAI (Local)", "Provider"])
-        self.mode_combo.currentTextChanged.connect(self._update_models)
-        layout.addWidget(self.mode_combo)
-
-        layout.addWidget(QLabel("Token Limit:"), alignment=Qt.AlignHCenter)
-        self.token_spin = QSpinBox()
-        self.token_spin.setObjectName("TokenBox")
-        self.token_spin.setRange(100, 32000)
-        self.token_spin.setValue(500)
-        self.token_spin.setButtonSymbols(QAbstractSpinBox.NoButtons)
-        self.token_spin.setAlignment(Qt.AlignCenter)
-        layout.addWidget(self.token_spin)
-
-        layout.addWidget(QLabel("Memory:"), alignment=Qt.AlignHCenter)
-        self.memory_combo = QComboBox()
-        self.memory_combo.setObjectName("MemoryBox")
-        self.memory_combo.addItems(["None", "Low", "Medium", "High"])
-        self.memory_combo.setCurrentText("Low")
-        layout.addWidget(self.memory_combo)
-
-        layout.addWidget(QLabel("Cloud Memory:"), alignment=Qt.AlignHCenter)
-        self.cloud_combo = QComboBox()
-        self.cloud_combo.setObjectName("CloudBox")
-        self.cloud_combo.addItems(["On", "Off"])
-        layout.addWidget(self.cloud_combo)
-
-        # --- Model Section (Replaces Dropdown) ---
-        layout.addSpacing(10)
-        layout.addWidget(QLabel("Current Model:"), alignment=Qt.AlignHCenter)
-        
+        # --- Current Model Display ---
+        layout.addSpacing(5)
         self.current_model_label = QLabel("(None)")
         self.current_model_label.setAlignment(Qt.AlignCenter)
         self.current_model_label.setStyleSheet("color: #00FFFF; font-weight: bold; font-size: 13px;")
         self.current_model_label.setWordWrap(True)
         layout.addWidget(self.current_model_label)
-        
+
         self.change_model_btn = QPushButton("Change Model")
         self.change_model_btn.setObjectName("ChangeModelBtn")
         self.change_model_btn.setFixedHeight(30)
+        self.change_model_btn.setCursor(Qt.PointingHandCursor)
         layout.addWidget(self.change_model_btn)
 
-        layout.addSpacing(10)
+        # --- Force Reasoning ---
+        layout.addSpacing(8)
         self.reasoning_mode_chk = QCheckBox("Force Reasoning Mode")
         self.reasoning_mode_chk.setToolTip("Injects system prompt to force <think> tags")
         self.reasoning_mode_chk.setStyleSheet("color: #E0E0E0;")
         layout.addWidget(self.reasoning_mode_chk)
 
-        layout.addSpacing(15)
-        
-        # --- Network Status Indicator ---
+        # --- Session Info Frame ---
+        layout.addSpacing(12)
+        self.session_frame = QFrame()
+        self.session_frame.setStyleSheet("""
+            QFrame {
+                background-color: rgba(30, 30, 30, 0.6);
+                border: 1px solid #333;
+                border-radius: 6px;
+            }
+        """)
+        session_layout = QVBoxLayout(self.session_frame)
+        session_layout.setContentsMargins(10, 8, 10, 8)
+        session_layout.setSpacing(4)
+
+        session_header = QLabel("Session Info:")
+        session_header.setStyleSheet("color: #888; font-size: 11px; font-weight: bold; margin-top: 0px; border: none;")
+        session_layout.addWidget(session_header)
+
+        # Stat rows (label: value pairs)
+        stat_style = "color: #AAAAAA; font-size: 11px; font-weight: normal; margin-top: 0px; border: none;"
+        val_style = "color: #FFFFFF; font-size: 11px; font-weight: bold; margin-top: 0px; border: none;"
+
+        # Mode
+        self.stat_mode = self._add_stat_row(session_layout, "Mode:", "Local", stat_style, val_style)
+        # Engine / Provider
+        self.stat_engine = self._add_stat_row(session_layout, "Engine:", "VoxAI (llama.cpp)", stat_style, val_style)
+        # Model Size / Quant
+        self.stat_quant = self._add_stat_row(session_layout, "Quant:", "—", stat_style, val_style)
+        # Context
+        self.stat_context = self._add_stat_row(session_layout, "Context:", "4096 tokens", stat_style, val_style)
+        # GPU / Tier
+        self.stat_gpu = self._add_stat_row(session_layout, "GPU:", "Local (Vulkan)", stat_style, val_style)
+        # Cost / Credits
+        self.stat_cost = self._add_stat_row(session_layout, "Cost:", "Free", stat_style, val_style)
+
+        # Separator inside session frame
+        mini_line = QFrame()
+        mini_line.setFrameShape(QFrame.HLine)
+        mini_line.setStyleSheet("background-color: #444; margin: 2px 0; border: none;")
+        session_layout.addWidget(mini_line)
+
+        # Network status inside session info
         net_layout = QHBoxLayout()
-        net_layout.setContentsMargins(0, 0, 0, 0)
+        net_layout.setContentsMargins(0, 2, 0, 0)
         net_layout.setSpacing(6)
-        
+
         self.network_icon = QLabel("🌐")
-        self.network_icon.setStyleSheet("font-size: 16px;")
+        self.network_icon.setStyleSheet("font-size: 14px; margin-top: 0px; border: none;")
         net_layout.addWidget(self.network_icon)
-        
+
         self.network_label = QLabel("Checking...")
-        self.network_label.setStyleSheet("color: #888; font-size: 11px;")
+        self.network_label.setStyleSheet("color: #888; font-size: 11px; font-weight: normal; margin-top: 0px; border: none;")
         net_layout.addWidget(self.network_label)
         net_layout.addStretch()
-        
-        layout.addLayout(net_layout)
 
-        layout.addSpacing(10)
+        session_layout.addLayout(net_layout)
+        layout.addWidget(self.session_frame)
+
+        # --- Status ---
+        layout.addSpacing(8)
         self.status_label = QLabel("Status: Idle")
         self.status_label.setAlignment(Qt.AlignCenter)
         self.status_label.setStyleSheet("color: #00FF00; font-weight: bold;")
@@ -195,66 +198,155 @@ class ChatOptionsPanel(QWidget):
 
         layout.addStretch()
 
-        self.local_models_cache = []  # Cache for local models
-        self.selected_model = None    # Currently selected model data
-    
-    # --- Network Status Methods ---
-    
+        # --- State ---
+        self.execution_mode = "local"     # "local", "cloud", "provider"
+        self.local_models_cache = []
+        self.selected_model = None
+
+    # --- Helpers ---
+
+    def _add_stat_row(self, parent_layout, label_text, value_text, label_style, value_style):
+        """Add a label: value stat row. Returns the value QLabel for later updates."""
+        row = QHBoxLayout()
+        row.setContentsMargins(0, 0, 0, 0)
+        row.setSpacing(4)
+        lbl = QLabel(label_text)
+        lbl.setStyleSheet(label_style)
+        lbl.setFixedWidth(55)
+        val = QLabel(value_text)
+        val.setStyleSheet(value_style)
+        val.setWordWrap(True)
+        row.addWidget(lbl)
+        row.addWidget(val, 1)
+        parent_layout.addLayout(row)
+        return val
+
+    # --- Execution Mode ---
+
+    def set_execution_mode(self, mode, model_data):
+        """Set execution mode and update model display + all session stats.
+        mode: 'local', 'cloud', 'provider'
+        model_data: dict with mode-specific keys
+        """
+        self.execution_mode = mode
+        self.selected_model = model_data
+
+        # Update model label with mode suffix
+        display = ""
+        if isinstance(model_data, dict):
+            display = model_data.get("display", "Unknown")
+
+        mode_suffix = {"local": "Local", "cloud": "Cloud GPU", "provider": "API"}.get(mode, "")
+        self.current_model_label.setText(f"{display}\n({mode_suffix})")
+
+        # Update all stat rows based on mode
+        if mode == "local":
+            filename = model_data.get("filename", "") if isinstance(model_data, dict) else ""
+            size = model_data.get("size", "") if isinstance(model_data, dict) else ""
+            # Detect quant from filename
+            quant = self._detect_quant(filename)
+            self.stat_mode.setText("Local")
+            self.stat_mode.setStyleSheet("color: #4ade80; font-size: 11px; font-weight: bold; border: none;")
+            self.stat_engine.setText("VoxAI (llama.cpp)")
+            self.stat_quant.setText(quant if quant else (size if size else "—"))
+            self.stat_context.setText("4096 tokens")
+            self.stat_gpu.setText("Local (Vulkan)")
+            self.stat_cost.setText("Free")
+            self.stat_cost.setStyleSheet("color: #4ade80; font-size: 11px; font-weight: bold; border: none;")
+
+        elif mode == "cloud":
+            cloud_id = model_data.get("cloud_id", "") if isinstance(model_data, dict) else ""
+            quant = self._detect_quant(cloud_id)
+            self.stat_mode.setText("Cloud GPU")
+            self.stat_mode.setStyleSheet("color: #bb86fc; font-size: 11px; font-weight: bold; border: none;")
+            self.stat_engine.setText("vLLM (RunPod)")
+            self.stat_quant.setText(quant if quant else "AWQ/FP16")
+            self.stat_context.setText("8192 tokens")
+            # Auto-detect GPU tier from model name
+            gpu_tier = "A100/H100" if any(k in cloud_id.lower() for k in ["70b", "72b", "120b"]) else "A40/A6000"
+            self.stat_gpu.setText(f"RunPod ({gpu_tier})")
+            self.stat_cost.setText("Checking...")
+            self.stat_cost.setStyleSheet("color: #f0ad4e; font-size: 11px; font-weight: bold; border: none;")
+
+        elif mode == "provider":
+            provider_name = model_data.get("provider", "Gemini") if isinstance(model_data, dict) else "Gemini"
+            self.stat_mode.setText("API Provider")
+            self.stat_mode.setStyleSheet("color: #5bc0de; font-size: 11px; font-weight: bold; border: none;")
+            self.stat_engine.setText(f"{provider_name} API")
+            self.stat_quant.setText("Native")
+            self.stat_context.setText("1M tokens")
+            self.stat_gpu.setText("Google Cloud")
+            self.stat_cost.setText("$0.00 / session")
+            self.stat_cost.setStyleSheet("color: #5bc0de; font-size: 11px; font-weight: bold; border: none;")
+
+    def _detect_quant(self, name):
+        """Detect quantization level from filename/model ID."""
+        if not name:
+            return ""
+        name_lower = name.lower()
+        for q in ["q2_k", "q3_k_m", "q3_k_s", "q4_0", "q4_k_m", "q4_k_s", "q5_0", "q5_k_m", "q5_k_s",
+                   "q6_k", "q8_0", "fp16", "f16", "awq", "gptq", "gguf", "4bit", "8bit"]:
+            if q in name_lower:
+                return q.upper().replace("_", " ")
+        return ""
+
+    def update_session_info(self, info_dict):
+        """Dynamically update session info stats. Accepts mode-specific data.
+        Local:    {"context_limit": 4096, "speed_tps": 12.5}
+        Cloud:    {"credits": 12.47, "cost_per_hr": 0.65, "gpu_type": "A100"}
+        Provider: {"api_cost_session": 0.18, "context_used": 4521}
+        """
+        if "context_limit" in info_dict:
+            self.stat_context.setText(f"{info_dict['context_limit']} tokens")
+        if "speed_tps" in info_dict:
+            self.stat_cost.setText(f"{info_dict['speed_tps']:.1f} t/s")
+            self.stat_cost.setStyleSheet("color: #4ade80; font-size: 11px; font-weight: bold; border: none;")
+        if "credits" in info_dict:
+            cost = info_dict.get("cost_per_hr", 0)
+            self.stat_cost.setText(f"${info_dict['credits']:.2f} ({cost:.2f}/hr)")
+            self.stat_cost.setStyleSheet("color: #f0ad4e; font-size: 11px; font-weight: bold; border: none;")
+        if "gpu_type" in info_dict:
+            self.stat_gpu.setText(f"RunPod ({info_dict['gpu_type']})")
+        if "api_cost_session" in info_dict:
+            self.stat_cost.setText(f"${info_dict['api_cost_session']:.4f}")
+            self.stat_cost.setStyleSheet("color: #5bc0de; font-size: 11px; font-weight: bold; border: none;")
+        if "context_used" in info_dict:
+            self.stat_context.setText(f"{info_dict['context_used']} tokens used")
+
+    # --- Network Status ---
+
     def set_network_status(self, status: str):
-        """Update network status indicator. 
+        """Update network status indicator.
         status: 'online', 'offline', 'searching', 'checking'
         """
         if status == "online":
             self.network_icon.setText("🟢")
             self.network_label.setText("Online")
-            self.network_label.setStyleSheet("color: #5cb85c; font-size: 11px;")
+            self.network_label.setStyleSheet("color: #5cb85c; font-size: 11px; font-weight: normal; margin-top: 0px; border: none;")
         elif status == "offline":
             self.network_icon.setText("🔴")
             self.network_label.setText("Offline")
-            self.network_label.setStyleSheet("color: #d9534f; font-size: 11px;")
+            self.network_label.setStyleSheet("color: #d9534f; font-size: 11px; font-weight: normal; margin-top: 0px; border: none;")
         elif status == "searching":
             self.network_icon.setText("🔍")
             self.network_label.setText("Searching...")
-            self.network_label.setStyleSheet("color: #f0ad4e; font-size: 11px;")
+            self.network_label.setStyleSheet("color: #f0ad4e; font-size: 11px; font-weight: normal; margin-top: 0px; border: none;")
         else:  # checking
             self.network_icon.setText("🌐")
             self.network_label.setText("Checking...")
-            self.network_label.setStyleSheet("color: #888; font-size: 11px;")
+            self.network_label.setStyleSheet("color: #888; font-size: 11px; font-weight: normal; margin-top: 0px; border: none;")
+
+    # --- Model Cache (for local models list) ---
 
     def set_local_models(self, models):
         """Called by MainWindow to update the list with real installed models"""
         self.local_models_cache = models if models else []
-        
+
         # Auto-select first model if none selected
         if self.local_models_cache and self.selected_model is None:
             first = self.local_models_cache[0]
             if isinstance(first, dict):
-                self.set_selected_model(first)
-    
-    def set_selected_model(self, model_data):
-        """Set the currently selected model and update the label."""
-        self.selected_model = model_data
-        if isinstance(model_data, dict):
-            # Extract short name (max 2 words from display name)
-            display = model_data.get("display", "Unknown")
-            parts = display.split()[:2]  # Take first 2 words
-            short_name = " ".join(parts)
-            self.current_model_label.setText(short_name)
-        else:
-            self.current_model_label.setText(str(model_data) if model_data else "(None)")
-    
-    def _update_models(self, mode):
-        """Handle mode change - reset model selection for Provider mode"""
-        if "VoxAI" not in mode:
-            # Provider mode - show placeholder
-            self.current_model_label.setText("API Model")
-            self.selected_model = {"display": "API Model", "filename": "provider"}
-        else:
-            # Local mode - restore cached selection or first model
-            if self.selected_model and self.selected_model.get("filename") != "provider":
-                self.set_selected_model(self.selected_model)
-            elif self.local_models_cache:
-                self.set_selected_model(self.local_models_cache[0])
+                self.set_execution_mode("local", first)
 
     def update_status(self, state):
         color = "#00FF00" if state.lower() == "idle" else "#00FFFF"
@@ -432,6 +524,7 @@ class PlaceholderPanel(QWidget):
     def __init__(self, mode_name):
         super().__init__()
         layout = QVBoxLayout(self)
+        layout.setContentsMargins(10, 0, 10, 0) # Fix margines
         label = QLabel(f"{mode_name}\nSettings Coming Soon")
         label.setAlignment(Qt.AlignCenter)
         label.setStyleSheet("color: #666; font-style: italic; background: transparent;")

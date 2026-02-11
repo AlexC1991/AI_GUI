@@ -1,11 +1,18 @@
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QTextEdit,
     QComboBox, QPushButton, QFrame, QScrollArea, QSlider,
-    QSpinBox, QGridLayout, QGroupBox, QDoubleSpinBox, QTabWidget, 
-    QProgressBar, QSplitter, QCheckBox, QSizePolicy
+    QSpinBox, QGridLayout, QGroupBox, QDoubleSpinBox, QTabWidget,
+    QProgressBar, QSplitter, QCheckBox, QSizePolicy, QStackedWidget
 )
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import Qt, Signal, QUrl, QTimer
 from PySide6.QtGui import QPixmap
+
+try:
+    from PySide6.QtMultimedia import QMediaPlayer, QAudioOutput
+    from PySide6.QtMultimediaWidgets import QVideoWidget
+    MULTIMEDIA_AVAILABLE = True
+except ImportError:
+    MULTIMEDIA_AVAILABLE = False
 from pathlib import Path
 from utils.config_manager import ConfigManager
 from backend.chat_worker import ChatWorker
@@ -28,8 +35,36 @@ MODEL_PROFILES = {
     "sdxl": {"name": "SDXL", "native_res": 1024, "default_steps": 30, "default_cfg": 5.5, "supports_negative": True, "prompt_hint": "Detailed natural language"},
     "flux": {"name": "Flux", "native_res": 1024, "default_steps": 20, "default_cfg": 3.5, "supports_negative": False, "prompt_hint": "Natural language (no negative)"},
     "pony": {"name": "Pony/Anime", "native_res": 768, "default_steps": 25, "default_cfg": 6.0, "supports_negative": True, "prompt_hint": "Booru tags"},
+    "gemini": {"name": "Gemini Cloud", "native_res": 1024, "default_steps": 1, "default_cfg": 1.0, "supports_negative": False, "prompt_hint": "Detailed natural language"},
+    "openai": {"name": "OpenAI Cloud", "native_res": 1024, "default_steps": 1, "default_cfg": 1.0, "supports_negative": False, "prompt_hint": "Detailed natural language"},
+    "video": {"name": "Video Gen", "native_res": 1280, "default_steps": 1, "default_cfg": 1.0, "supports_negative": False, "prompt_hint": "Describe the scene, camera motion, action"},
     "unknown": {"name": "Unknown", "native_res": 512, "default_steps": 25, "default_cfg": 7.0, "supports_negative": True, "prompt_hint": "Try tags or natural"},
 }
+
+# Gemini image model display names
+GEMINI_IMAGE_DISPLAY = {
+    "gemini-2.5-flash-image": "Gemini Flash Image  [Cloud]",
+    "gemini-3-pro-image-preview": "Gemini Pro Image  [Cloud]",
+}
+
+# OpenAI image model display names
+OPENAI_IMAGE_DISPLAY = {
+    "gpt-image-1": "GPT Image 1  [Cloud]",
+    "dall-e-3": "DALL\u00B7E 3  [Cloud]",
+}
+
+# Video model display names
+SORA_VIDEO_DISPLAY = {
+    "sora-2": "Sora 2  [Video]",
+    "sora-2-pro": "Sora 2 Pro  [Video]",
+}
+
+VEO_VIDEO_DISPLAY = {
+    "veo-3.1-generate-preview": "Veo 3.1  [Video]",
+    "veo-3.1-fast-generate-preview": "Veo 3.1 Fast  [Video]",
+}
+
+ALL_VIDEO_DISPLAY = {**SORA_VIDEO_DISPLAY, **VEO_VIDEO_DISPLAY}
 
 def detect_model_family(model_name: str) -> str:
     name_lower = model_name.lower()
@@ -327,65 +362,246 @@ class ImageGenView(QWidget):
         self.auto_cfg_check.setChecked(True)
         self.auto_cfg_check.setStyleSheet("color:#AAA")
         grid.addWidget(self.auto_cfg_check, 3, 2, 1, 2)
-        
+
+        # --- Video-specific controls (hidden by default) ---
+        self.video_duration_label = QLabel("Duration:", styleSheet="color:#0CC")
+        grid.addWidget(self.video_duration_label, 4, 0)
+        self.video_duration = QComboBox()
+        self.video_duration.addItems(["4s", "8s", "12s"])
+        self.video_duration.setCurrentText("8s")
+        self.video_duration.setStyleSheet("background:#252526;color:white;border:1px solid #444")
+        grid.addWidget(self.video_duration, 4, 1)
+
+        self.video_aspect_label = QLabel("Aspect:", styleSheet="color:#0CC")
+        grid.addWidget(self.video_aspect_label, 4, 2)
+        self.video_aspect = QComboBox()
+        self.video_aspect.addItems(["16:9  (Landscape)", "9:16  (Portrait)"])
+        self.video_aspect.setStyleSheet("background:#252526;color:white;border:1px solid #444")
+        grid.addWidget(self.video_aspect, 4, 3)
+
+        # Start hidden
+        self._toggle_video_controls(False)
+
         self.right_layout.addWidget(frame)
     
     def _create_output_section(self):
+        # --- Live Stats Bar ---
+        stats_frame = QFrame()
+        stats_frame.setStyleSheet("background:#1A1A1E;border:1px solid #333;border-radius:8px;")
+        stats_lay = QHBoxLayout(stats_frame)
+        stats_lay.setContentsMargins(12, 8, 12, 8)
+        stats_lay.setSpacing(16)
+
+        # Pulsing orb (animated during generation)
+        self._stats_orb = QLabel("●")
+        self._stats_orb.setFixedSize(18, 18)
+        self._stats_orb.setAlignment(Qt.AlignCenter)
+        self._stats_orb.setStyleSheet("color:#555;font-size:12px;background:transparent;border:none;")
+        stats_lay.addWidget(self._stats_orb)
+
+        # Status text
         self.status_label = QLabel("Ready")
-        self.status_label.setStyleSheet("color:#888;font-size:11px")
-        self.right_layout.addWidget(self.status_label)
-        
+        self.status_label.setStyleSheet("color:#888;font-size:12px;font-weight:500;background:transparent;border:none;")
+        stats_lay.addWidget(self.status_label)
+
+        stats_lay.addStretch()
+
+        # Elapsed timer
+        self._elapsed_label = QLabel("")
+        self._elapsed_label.setStyleSheet("color:#0AA;font-size:11px;font-family:'JetBrains Mono','Consolas',monospace;background:transparent;border:none;")
+        stats_lay.addWidget(self._elapsed_label)
+
+        # Model badge
+        self._model_badge = QLabel("")
+        self._model_badge.setStyleSheet("color:#666;font-size:10px;background:transparent;border:none;")
+        stats_lay.addWidget(self._model_badge)
+
+        self.right_layout.addWidget(stats_frame)
+
+        # --- Progress Bar ---
         self.progress_bar = QProgressBar()
         self.progress_bar.setRange(0, 100)
         self.progress_bar.setTextVisible(True)
         self.progress_bar.setFormat("%v / %m")
         self.progress_bar.setFixedHeight(18)
-        self.progress_bar.setStyleSheet("QProgressBar{border:1px solid #333;background:#222;border-radius:4px;text-align:center;color:white}QProgressBar::chunk{background:#088;border-radius:3px}")
+        self.progress_bar.setStyleSheet(
+            "QProgressBar{border:1px solid #333;background:#222;border-radius:4px;text-align:center;color:white}"
+            "QProgressBar::chunk{background: qlineargradient(x1:0,y1:0,x2:1,y2:0,stop:0 #066,stop:0.5 #0AA,stop:1 #066);border-radius:3px}"
+        )
         self.right_layout.addWidget(self.progress_bar)
-        
+
+        # --- Output Tabs ---
         self.output_tabs = QTabWidget()
         self.output_tabs.setStyleSheet("QTabWidget::pane{border:1px solid #333;background:#111}QTabBar::tab{background:#222;color:#888;padding:6px 12px}QTabBar::tab:selected{background:#333;color:white;border-top:2px solid #088}")
         self.update_tab_count(1)
         self.right_layout.addWidget(self.output_tabs, 1)
+
+        # --- Live Timer State ---
+        self._gen_start_time = None
+        self._orb_phase = 0
+        self._orb_colors = ["#088", "#0AA", "#0CC", "#0EE", "#0CC", "#0AA"]
+
+        self._live_timer = QTimer(self)
+        self._live_timer.timeout.connect(self._tick_live_stats)
+        # Timer runs at 200ms for smooth orb animation
     
     def _on_ckpt_changed(self, name):
         if not name or "No checkpoint" in name: return
-        family = detect_model_family(name)
-        profile = MODEL_PROFILES.get(family, MODEL_PROFILES["unknown"])
+
+        # Check model type
+        is_cloud = self._is_cloud_model(name)
+        is_video = self._is_video_model(name)
+
+        if is_video:
+            family = "video"
+            profile = MODEL_PROFILES["video"]
+        elif self._is_gemini_model(name):
+            family = "gemini"
+            profile = MODEL_PROFILES["gemini"]
+        elif self._is_openai_model(name):
+            family = "openai"
+            profile = MODEL_PROFILES["openai"]
+        else:
+            family = detect_model_family(name)
+            profile = MODEL_PROFILES.get(family, MODEL_PROFILES["unknown"])
+
         self.current_family = family
         self.family_label.setText(f"Family: {profile['name']}")
         self.hint_label.setText(profile['prompt_hint'])
-        
+
         self.neg_label.setVisible(profile['supports_negative'])
         self.neg_prompt.setVisible(profile['supports_negative'])
-        
+
+        # Hide local-only controls for cloud/video models
+        self._toggle_local_controls(not (is_cloud or is_video))
+
+        # Show/hide video-specific controls
+        self._toggle_video_controls(is_video)
+
         if self.auto_cfg_check.isChecked():
             self.cfg.setValue(profile['default_cfg'])
             self.steps.setValue(profile['default_steps'])
+
+    def _is_gemini_model(self, name: str) -> bool:
+        """Check if a display name maps to a Gemini image model."""
+        return name in GEMINI_IMAGE_DISPLAY.values() or name.startswith("gemini-")
+
+    def _is_openai_model(self, name: str) -> bool:
+        """Check if a display name maps to an OpenAI image model."""
+        return name in OPENAI_IMAGE_DISPLAY.values() or name.startswith("dall-e") or name.startswith("gpt-image")
+
+    def _is_cloud_model(self, name: str) -> bool:
+        """Check if a display name maps to any cloud image model."""
+        return self._is_gemini_model(name) or self._is_openai_model(name)
+
+    def _is_video_model(self, name: str) -> bool:
+        """Check if a display name maps to a video generation model."""
+        return (name in ALL_VIDEO_DISPLAY.values()
+                or name.startswith("sora-") or name.startswith("veo-"))
+
+    def get_gemini_model_id(self) -> str:
+        """Get the Gemini API model ID from the display name."""
+        display = self.ckpt_combo.currentText()
+        for model_id, disp_name in GEMINI_IMAGE_DISPLAY.items():
+            if disp_name == display:
+                return model_id
+        return display
+
+    def get_openai_model_id(self) -> str:
+        """Get the OpenAI API model ID from the display name."""
+        display = self.ckpt_combo.currentText()
+        for model_id, disp_name in OPENAI_IMAGE_DISPLAY.items():
+            if disp_name == display:
+                return model_id
+        return display
+
+    def _toggle_local_controls(self, visible: bool):
+        """Show/hide controls that only apply to local models."""
+        for widget in [self.res_combo, self.sampler_combo, self.steps,
+                       self.cfg, self.seed_spin, self.batch_spin,
+                       self.keep_model_check, self.auto_cfg_check]:
+            widget.setEnabled(visible)
+
+    def _toggle_video_controls(self, visible: bool):
+        """Show/hide video-specific controls (duration, aspect ratio)."""
+        for widget in [self.video_duration_label, self.video_duration,
+                       self.video_aspect_label, self.video_aspect]:
+            widget.setVisible(visible)
     
     def refresh_assets(self):
         config = ConfigManager.load_config()
         img_cfg = config.get("image", {})
+        llm_cfg = config.get("llm", {})
         ckpt_dir = Path(img_cfg.get("checkpoint_dir", "models/checkpoints"))
         lora_dir = Path(img_cfg.get("lora_dir", "models/loras"))
         vae_dir = Path(img_cfg.get("vae_dir", "models/vae"))
         # Using configured dir or default
         text_enc_dir = Path(img_cfg.get("text_encoder_dir", "models/text_encoders"))
-        
-        # Checkpoints
+
+        # Checkpoints (local)
         ckpts = []
         if ckpt_dir.exists():
             for ext in ["*.safetensors", "*.ckpt", "*.gguf"]:
                 ckpts.extend([f.name for f in ckpt_dir.glob(ext)])
         ckpts.sort()
-        
+
+        # Cloud image models (Gemini + OpenAI)
+        cloud_display_names = []
+
+        # Gemini
+        gemini_api_key = llm_cfg.get("api_key", "")
+        if gemini_api_key:
+            try:
+                from providers.gemini_provider import GeminiProvider
+                for mid in GeminiProvider.list_image_models():
+                    display = GEMINI_IMAGE_DISPLAY.get(mid, f"{mid}  [Cloud]")
+                    cloud_display_names.append(display)
+            except Exception as e:
+                print(f"[ImageGen] Could not load Gemini image models: {e}")
+
+        # OpenAI (DALL-E)
+        openai_api_key = llm_cfg.get("openai_api_key", "")
+        if openai_api_key:
+            try:
+                from providers.openai_provider import OpenAIProvider
+                for mid in OpenAIProvider.list_image_models():
+                    display = OPENAI_IMAGE_DISPLAY.get(mid, f"{mid}  [Cloud]")
+                    cloud_display_names.append(display)
+            except Exception as e:
+                print(f"[ImageGen] Could not load OpenAI image models: {e}")
+
+        # --- Video generation models ---
+        video_display_names = []
+
+        # Veo (Gemini key)
+        if gemini_api_key:
+            try:
+                from providers.gemini_provider import GeminiProvider
+                for mid in GeminiProvider.list_video_models():
+                    display = VEO_VIDEO_DISPLAY.get(mid, f"{mid}  [Video]")
+                    video_display_names.append(display)
+            except Exception as e:
+                print(f"[ImageGen] Could not load Veo video models: {e}")
+
+        # Sora (OpenAI key)
+        if openai_api_key:
+            try:
+                from providers.openai_provider import OpenAIProvider
+                for mid in OpenAIProvider.list_video_models():
+                    display = SORA_VIDEO_DISPLAY.get(mid, f"{mid}  [Video]")
+                    video_display_names.append(display)
+            except Exception as e:
+                print(f"[ImageGen] Could not load Sora video models: {e}")
+
+        all_models = ckpts + cloud_display_names + video_display_names
+
         cur = self.ckpt_combo.currentText()
         self.ckpt_combo.blockSignals(True)
         self.ckpt_combo.clear()
-        self.ckpt_combo.addItems(ckpts if ckpts else ["No checkpoints found"])
-        if cur in ckpts: self.ckpt_combo.setCurrentText(cur)
+        self.ckpt_combo.addItems(all_models if all_models else ["No checkpoints found"])
+        if cur in all_models: self.ckpt_combo.setCurrentText(cur)
         self.ckpt_combo.blockSignals(False)
-        if ckpts: self._on_ckpt_changed(self.ckpt_combo.currentText())
+        if all_models: self._on_ckpt_changed(self.ckpt_combo.currentText())
         
         # LoRAs
         self.available_loras = []
@@ -442,16 +658,119 @@ class ImageGenView(QWidget):
         for i in range(count):
             tab = QWidget()
             lay = QVBoxLayout(tab)
-            lbl = QLabel(f"Image {i+1}\\n(Waiting...)")
+
+            # Stacked widget: image label (idx 0) / video player (idx 1)
+            stack = QStackedWidget()
+            stack.setObjectName("output_stack")
+
+            # Image preview label
+            lbl = QLabel(f"Image {i+1}\n(Waiting...)")
             lbl.setAlignment(Qt.AlignCenter)
             lbl.setStyleSheet("color:#555;font-style:italic")
             lbl.setMinimumSize(350, 350)
             lbl.setObjectName("preview_label")
-            lay.addWidget(lbl)
-            self.output_tabs.addTab(tab, f"Image {i+1}")
+            stack.addWidget(lbl)
+
+            # Video player widget
+            video_container = QWidget()
+            video_lay = QVBoxLayout(video_container)
+            video_lay.setContentsMargins(0, 0, 0, 0)
+            video_lay.setSpacing(4)
+
+            if MULTIMEDIA_AVAILABLE:
+                video_widget = QVideoWidget()
+                video_widget.setMinimumSize(350, 250)
+                video_widget.setStyleSheet("background: black;")
+                video_widget.setObjectName("video_widget")
+                video_lay.addWidget(video_widget, 1)
+
+                # Transport controls
+                transport = QHBoxLayout()
+                play_btn = QPushButton("▶ Play")
+                play_btn.setObjectName("video_play_btn")
+                play_btn.setCursor(Qt.PointingHandCursor)
+                play_btn.setStyleSheet(
+                    "QPushButton{background:#088;color:white;border:none;padding:6px 16px;border-radius:4px;font-weight:bold}"
+                    "QPushButton:hover{background:#0AA}"
+                    "QPushButton:pressed{background:#066}"
+                )
+                pause_btn = QPushButton("⏸ Pause")
+                pause_btn.setObjectName("video_pause_btn")
+                pause_btn.setCursor(Qt.PointingHandCursor)
+                pause_btn.setStyleSheet(
+                    "QPushButton{background:#444;color:white;border:none;padding:6px 16px;border-radius:4px}"
+                    "QPushButton:hover{background:#555}"
+                    "QPushButton:pressed{background:#333}"
+                )
+                stop_btn = QPushButton("⏹ Stop")
+                stop_btn.setObjectName("video_stop_btn")
+                stop_btn.setCursor(Qt.PointingHandCursor)
+                stop_btn.setStyleSheet(
+                    "QPushButton{background:#444;color:white;border:none;padding:6px 16px;border-radius:4px}"
+                    "QPushButton:hover{background:#555}"
+                    "QPushButton:pressed{background:#333}"
+                )
+                transport.addStretch()
+                transport.addWidget(play_btn)
+                transport.addWidget(pause_btn)
+                transport.addWidget(stop_btn)
+                transport.addStretch()
+                video_lay.addLayout(transport)
+            else:
+                no_video = QLabel("Video playback unavailable\n(PySide6 multimedia not installed)")
+                no_video.setAlignment(Qt.AlignCenter)
+                no_video.setStyleSheet("color:#888;font-style:italic")
+                video_lay.addWidget(no_video)
+
+            stack.addWidget(video_container)
+            stack.setCurrentIndex(0)  # Default: show image label
+
+            lay.addWidget(stack)
+            self.output_tabs.addTab(tab, f"Output {i+1}")
     
     # === API ===
-    def get_selected_checkpoint(self): return self.ckpt_combo.currentText()
+    def is_gemini_selected(self) -> bool:
+        """Check if the currently selected model is a Gemini cloud model."""
+        return self._is_gemini_model(self.ckpt_combo.currentText())
+
+    def is_openai_selected(self) -> bool:
+        """Check if the currently selected model is an OpenAI cloud model."""
+        return self._is_openai_model(self.ckpt_combo.currentText())
+
+    def is_video_selected(self) -> bool:
+        """Check if the currently selected model is a video generation model."""
+        return self._is_video_model(self.ckpt_combo.currentText())
+
+    def get_video_model_id(self) -> str:
+        """Get the actual API model ID from a video display name."""
+        display = self.ckpt_combo.currentText()
+        for model_id, disp_name in ALL_VIDEO_DISPLAY.items():
+            if disp_name == display:
+                return model_id
+        return display
+
+    def get_video_duration(self) -> int:
+        """Get selected video duration in seconds."""
+        text = self.video_duration.currentText()
+        return int(text.replace("s", ""))
+
+    def get_video_aspect(self) -> str:
+        """Get selected video aspect ratio."""
+        text = self.video_aspect.currentText()
+        if "9:16" in text:
+            return "9:16"
+        return "16:9"
+
+    def get_selected_checkpoint(self):
+        """Return selected model. For cloud/video models, returns the API model ID."""
+        text = self.ckpt_combo.currentText()
+        if self._is_video_model(text):
+            return self.get_video_model_id()
+        if self._is_gemini_model(text):
+            return self.get_gemini_model_id()
+        if self._is_openai_model(text):
+            return self.get_openai_model_id()
+        return text
     def get_resolution(self): return self.res_combo.currentData() or (512, 512)
     def get_steps(self): return self.steps.value()
     def get_cfg_scale(self): return self.cfg.value()
@@ -495,17 +814,77 @@ class ImageGenView(QWidget):
     
     def set_status(self, text, color="#888"):
         self.status_label.setText(text)
-        self.status_label.setStyleSheet(f"color:{color};font-size:11px")
+        self.status_label.setStyleSheet(f"color:{color};font-size:12px;font-weight:500;background:transparent;border:none;")
+
+    # --- Live Stats Animation ---
+    def start_live_stats(self):
+        """Call when generation starts. Starts elapsed timer and orb animation."""
+        import time
+        self._gen_start_time = time.time()
+        self._orb_phase = 0
+        # Show model name in badge
+        model = self.ckpt_combo.currentText()
+        if len(model) > 30:
+            model = model[:27] + "..."
+        self._model_badge.setText(f"⚡ {model}")
+        self._model_badge.setStyleSheet("color:#888;font-size:10px;background:transparent;border:none;")
+        self._elapsed_label.setText("0.0s")
+        self._live_timer.start(200)
+
+    def stop_live_stats(self):
+        """Call when generation finishes. Stops timer and shows final time."""
+        self._live_timer.stop()
+        # Show final elapsed
+        if self._gen_start_time:
+            import time
+            elapsed = time.time() - self._gen_start_time
+            self._elapsed_label.setText(f"{elapsed:.1f}s")
+            self._elapsed_label.setStyleSheet("color:#4ade80;font-size:11px;font-family:'JetBrains Mono','Consolas',monospace;background:transparent;border:none;")
+        # Set orb to green (done)
+        self._stats_orb.setStyleSheet("color:#4ade80;font-size:12px;background:transparent;border:none;")
+        self._gen_start_time = None
+
+    def _tick_live_stats(self):
+        """Called every 200ms during generation for live updates."""
+        import time
+        if self._gen_start_time:
+            elapsed = time.time() - self._gen_start_time
+            self._elapsed_label.setText(f"{elapsed:.1f}s")
+
+        # Animate orb color cycle
+        self._orb_phase = (self._orb_phase + 1) % len(self._orb_colors)
+        color = self._orb_colors[self._orb_phase]
+        # Pulse size
+        sizes = [10, 11, 12, 13, 14, 13]
+        size = sizes[self._orb_phase % len(sizes)]
+        self._stats_orb.setStyleSheet(f"color:{color};font-size:{size}px;background:transparent;border:none;")
+
+    def reset_live_stats(self):
+        """Reset stats to idle state."""
+        self._live_timer.stop()
+        self._gen_start_time = None
+        self._elapsed_label.setText("")
+        self._model_badge.setText("")
+        self._stats_orb.setStyleSheet("color:#555;font-size:12px;background:transparent;border:none;")
     
+    def show_output(self, path, tab_index=0):
+        """Auto-detect image vs video and show in the correct widget."""
+        p = Path(path)
+        if p.suffix.lower() in (".mp4", ".webm", ".mov", ".avi"):
+            self.show_video(path, tab_index)
+        else:
+            self.show_image(path, tab_index)
+
     def show_image(self, path, tab_index=0):
         if tab_index < self.output_tabs.count():
             tab = self.output_tabs.widget(tab_index)
+            stack = tab.findChild(QStackedWidget, "output_stack")
+            if stack:
+                stack.setCurrentIndex(0)  # Switch to image view
             lbl = tab.findChild(QLabel, "preview_label")
             if lbl and Path(path).exists():
-                # FIX: Actually load the image from path
                 pix = QPixmap(str(path))
                 if not pix.isNull():
-                    # Scale to fit label while maintaining aspect ratio
                     scaled = pix.scaled(
                         lbl.size(),
                         Qt.KeepAspectRatio,
@@ -513,6 +892,91 @@ class ImageGenView(QWidget):
                     )
                     lbl.setPixmap(scaled)
                     lbl.setStyleSheet("")
+
+    def show_video(self, path, tab_index=0):
+        """Load a video file into the video player widget."""
+        if not MULTIMEDIA_AVAILABLE:
+            self.set_status("Video playback unavailable — install PySide6-Multimedia", "#f59e0b")
+            return
+
+        if tab_index >= self.output_tabs.count():
+            return
+
+        tab = self.output_tabs.widget(tab_index)
+        stack = tab.findChild(QStackedWidget, "output_stack")
+        video_widget = tab.findChild(QVideoWidget, "video_widget")
+        if not video_widget:
+            self.set_status("Video widget not found", "#f59e0b")
+            return
+
+        # Switch to video view FIRST so the widget is visible before playback
+        if stack:
+            stack.setCurrentIndex(1)
+
+        # Force the video widget to be shown and sized properly
+        video_widget.show()
+        video_widget.update()
+
+        # Create or retrieve player — store as Python attributes to prevent GC
+        if not hasattr(self, '_video_players'):
+            self._video_players = {}
+
+        if tab_index not in self._video_players:
+            player = QMediaPlayer(self)  # Parent to self for lifecycle
+            audio = QAudioOutput(self)
+            player.setAudioOutput(audio)
+            player.setVideoOutput(video_widget)
+
+            # Debug: connect error signal for troubleshooting
+            player.errorOccurred.connect(
+                lambda err, msg: print(f"[VideoPlayer] Error: {err} — {msg}")
+            )
+            player.mediaStatusChanged.connect(
+                lambda status: print(f"[VideoPlayer] Status: {status}")
+            )
+
+            self._video_players[tab_index] = {"player": player, "audio": audio}
+
+            # Wire transport buttons with active state feedback
+            play_btn = tab.findChild(QPushButton, "video_play_btn")
+            pause_btn = tab.findChild(QPushButton, "video_pause_btn")
+            stop_btn = tab.findChild(QPushButton, "video_stop_btn")
+
+            def _update_transport(state, pb=play_btn, pa=pause_btn, sb=stop_btn):
+                """Highlight the active transport button based on playback state."""
+                ACTIVE = (
+                    "QPushButton{background:#088;color:white;border:none;padding:6px 16px;border-radius:4px;font-weight:bold}"
+                    "QPushButton:hover{background:#0AA}"
+                    "QPushButton:pressed{background:#066}"
+                )
+                IDLE = (
+                    "QPushButton{background:#444;color:white;border:none;padding:6px 16px;border-radius:4px}"
+                    "QPushButton:hover{background:#555}"
+                    "QPushButton:pressed{background:#333}"
+                )
+                # QMediaPlayer.PlaybackState: 0=Stopped, 1=Playing, 2=Paused
+                if pb: pb.setStyleSheet(ACTIVE if state == 1 else IDLE)
+                if pa: pa.setStyleSheet(ACTIVE if state == 2 else IDLE)
+                if sb: sb.setStyleSheet(ACTIVE if state == 0 else IDLE)
+
+            player.playbackStateChanged.connect(_update_transport)
+
+            if play_btn:
+                play_btn.clicked.connect(player.play)
+            if pause_btn:
+                pause_btn.clicked.connect(player.pause)
+            if stop_btn:
+                stop_btn.clicked.connect(player.stop)
+
+        player = self._video_players[tab_index]["player"]
+
+        # Resolve absolute path for Windows
+        abs_path = str(Path(path).resolve())
+        print(f"[VideoPlayer] Loading: {abs_path}")
+
+        # Set source and defer play slightly so widget has time to render
+        player.setSource(QUrl.fromLocalFile(abs_path))
+        QTimer.singleShot(300, player.play)
 
     # --- LLM ENHANCEMENT LOGIC ---
     def enhance_prompt(self):

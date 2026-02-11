@@ -2,12 +2,11 @@ from PySide6.QtCore import QThread, Signal
 import os
 import sys
 
-# Resolve path to VoxAI models
+# Resolve path to LLM models
 def get_vox_models_dir():
-    # Go up from backend/providers -> backend -> root -> VoxAI_Chat_API
-    # Currently this file is in backend/
+    # Go up from backend/ -> root -> models/llm
     root_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    return os.path.join(root_dir, "VoxAI_Chat_API", "models")
+    return os.path.join(root_dir, "models", "llm")
 
 class VoxModelWorker(QThread):
     progress = Signal(str)      
@@ -86,12 +85,23 @@ class VoxModelWorker(QThread):
         try:
             files = [f for f in os.listdir(models_dir) if f.endswith(".gguf")]
             print(f"[VoxModelWorker] Found: {files}")
-            
+
             structured_list = []
             for f in files:
+                filepath = os.path.join(models_dir, f)
+                size_text = ""
+                try:
+                    size_bytes = os.path.getsize(filepath)
+                    if size_bytes >= 1024**3:
+                        size_text = f"{size_bytes / (1024**3):.1f} GB"
+                    elif size_bytes >= 1024**2:
+                        size_text = f"{size_bytes / (1024**2):.0f} MB"
+                except Exception:
+                    pass
                 structured_list.append({
                     "display": self._format_model_name(f),
-                    "filename": f
+                    "filename": f,
+                    "size": size_text,
                 })
             
             if not files:

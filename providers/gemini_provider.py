@@ -1,5 +1,6 @@
-"""Gemini API Provider"""
+"""Gemini API Provider — Chat, Image, and Video Generation"""
 import os
+import time
 from typing import Generator, Optional
 
 try:
@@ -13,9 +14,6 @@ from .base_provider import BaseProvider, Message, ProviderStatus
 
 class GeminiProvider(BaseProvider):
     """Google Gemini API provider for cloud-based LLM."""
-    
-    # Cache for available models
-    _available_models = None
     
     def __init__(self, model: str = None, api_key: str = None):
         self.api_key = api_key or os.environ.get("GEMINI_API_KEY", "")
@@ -43,93 +41,49 @@ class GeminiProvider(BaseProvider):
             print(f"Gemini configuration error: {e}")
             self._configured = False
     
-    # Pro tier models (not always returned by list_models API)
-    PRO_TIER_MODELS = [
-        # Auto-updating aliases (recommended)
-        "gemini-pro-latest",
-        "gemini-flash-latest",
-        # Gemini 3 Series (Frontier)
-        "gemini-3-pro-preview",
-        "gemini-3-flash-preview",
-        # Gemini 2.5 Series (Stable)
+    # Curated LLM chat models — text-only, no image gen, max 5
+    CHAT_MODELS = [
         "gemini-2.5-pro",
         "gemini-2.5-flash",
         "gemini-2.5-flash-lite",
+        "gemini-3-pro-preview",
+        "gemini-3-flash-preview",
     ]
-    
+
+    # Gemini image generation models (for image gen tab)
+    IMAGE_MODELS = [
+        "gemini-2.5-flash-image",          # Nano Banana — fast image gen
+        "gemini-3-pro-image-preview",       # Pro — higher quality image gen
+    ]
+
+    # Veo video generation models
+    VIDEO_MODELS = [
+        "veo-3.1-generate-preview",         # High quality + audio
+        "veo-3.1-fast-generate-preview",    # Fast variant
+    ]
+
     @classmethod
     def list_available_models(cls, api_key: str = None) -> list[str]:
-        """Fetch list of available models from Gemini API.
-        
-        Returns:
-            List of model names that support generateContent
+        """Return curated list of Gemini LLM chat models (max 5).
+
+        Only returns text chat models — no image generation, no nano, no experimental.
         """
-        if not GENAI_AVAILABLE:
-            return cls.PRO_TIER_MODELS.copy()
-        
-        # Use cached result if available
-        if cls._available_models is not None:
-            return cls._available_models
-        
-        try:
-            key = api_key or os.environ.get("GEMINI_API_KEY", "")
-            if key:
-                genai.configure(api_key=key)
-            
-            # Start with Pro tier models
-            models = set(cls.PRO_TIER_MODELS)
-            
-            # Add models from API
-            for model in genai.list_models():
-                # Only include models that support generateContent
-                if "generateContent" in model.supported_generation_methods:
-                    # Extract the model name (remove 'models/' prefix)
-                    name = model.name
-                    if name.startswith("models/"):
-                        name = name[7:]
-                    
-                    # Filter to only useful models (flash and pro)
-                    skip_patterns = [
-                        "aqa", "embedding", "vision", "legacy", 
-                        "exp", "thinking", "learnlm", "imagen", "tts"
-                    ]
-                    if any(pattern in name.lower() for pattern in skip_patterns):
-                        continue
-                    
-                    # Only include flash and pro models
-                    if "flash" in name.lower() or "pro" in name.lower():
-                        models.add(name)
-            
-            # Convert to list and sort
-            models = list(models)
-            
-            def sort_key(m):
-                # Priority: latest aliases first, then by version
-                if "latest" in m:
-                    return (0, 0 if "flash" in m else 1, m)
-                elif "-3-" in m:
-                    return (1, 0 if "flash" in m else 1, m)
-                elif "2.5" in m:
-                    return (2, 0 if "flash" in m else 1, m)
-                elif "2.0" in m:
-                    return (3, 0 if "flash" in m else 1, m)
-                elif "1.5" in m:
-                    return (4, 0 if "flash" in m else 1, m)
-                else:
-                    return (5, 0 if "flash" in m else 1, m)
-            
-            models.sort(key=sort_key)
-            cls._available_models = models
-            return models
-            
-        except Exception as e:
-            print(f"Error listing models: {e}")
-            return cls.PRO_TIER_MODELS.copy()
-    
+        return cls.CHAT_MODELS.copy()
+
+    @classmethod
+    def list_image_models(cls, api_key: str = None) -> list[str]:
+        """Return Gemini models that support image generation."""
+        return cls.IMAGE_MODELS.copy()
+
+    @classmethod
+    def list_video_models(cls, api_key: str = None) -> list[str]:
+        """Return Veo models that support video generation."""
+        return cls.VIDEO_MODELS.copy()
+
     @classmethod
     def clear_model_cache(cls):
-        """Clear the cached model list."""
-        cls._available_models = None
+        """No-op — models are now a curated static list."""
+        pass
     
     def _build_history(self, history: list[Message] = None) -> list[dict]:
         """Convert Message objects to Gemini format."""
@@ -242,3 +196,57 @@ class GeminiProvider(BaseProvider):
             message="Ready",
             model=self.model_name
         )
+
+    # ------------------------------------------------------------------
+    # Veo Video Generation
+    # ------------------------------------------------------------------
+
+    def create_and_wait_video(self, prompt: str, model: str = "veo-3.1-generate-preview",
+                              aspect_ratio: str = "16:9", resolution: str = "720p",
+                              duration: int = 8, save_path: str = "output.mp4",
+                              progress_callback=None,
+                              poll_interval: int = 10) -> str:
+        """Full Veo pipeline: submit → poll → download. Returns save_path.
+        Uses google.genai SDK (not the legacy google.generativeai).
+        """
+        from google import genai as genai_new
+        from google.genai import types
+
+        client = genai_new.Client(api_key=self.api_key)
+
+        if progress_callback:
+            progress_callback(f"Submitting to {model}...")
+
+        operation = client.models.generate_videos(
+            model=model,
+            prompt=prompt,
+            config=types.GenerateVideosConfig(
+                aspect_ratio=aspect_ratio,
+                resolution=resolution,
+                duration_seconds=str(duration),
+            ),
+        )
+
+        if progress_callback:
+            progress_callback("Job queued, rendering video...")
+
+        elapsed = 0
+        while not operation.done:
+            elapsed += poll_interval
+            if progress_callback:
+                progress_callback(f"Rendering... {elapsed}s elapsed")
+            time.sleep(poll_interval)
+            operation = client.operations.get(operation)
+
+        # Download the video
+        if not operation.response or not operation.response.generated_videos:
+            raise RuntimeError("Veo returned no video data.")
+
+        if progress_callback:
+            progress_callback("Downloading video...")
+
+        generated_video = operation.response.generated_videos[0]
+        client.files.download(file=generated_video.video)
+        generated_video.video.save(save_path)
+
+        return save_path

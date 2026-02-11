@@ -28,7 +28,7 @@ from pathlib import Path
 
 # Get app directory
 APP_DIR = Path(__file__).parent.absolute()
-VOX_API_DIR = APP_DIR / "VoxAI_Chat_API"
+VOX_API_DIR = APP_DIR / "engine"
 
 def _setup_vox_backend():
     """
@@ -38,7 +38,7 @@ def _setup_vox_backend():
     """
     print("[VoxAI] Setting up custom backend...")
     
-    # Check if VoxAI_Chat_API exists
+    # Check if engine/ exists
     if not VOX_API_DIR.exists():
         print(f"[VoxAI] WARNING: {VOX_API_DIR} not found")
         return False

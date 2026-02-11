@@ -204,9 +204,10 @@ MODEL_FORMAT_PATTERNS = [
     (r"mixtral.*instruct", ChatFormat.MISTRAL),
     (r"mistral-nemo", ChatFormat.MISTRAL),
     
-    # Phi models
+    # Phi / GPT-OSS models (use Phi3 <|end|> style tokens)
     (r"phi-?3", ChatFormat.PHI3),
     (r"phi-?2", ChatFormat.ALPACA),
+    (r"gpt.*oss", ChatFormat.PHI3),
     
     # Qwen models
     (r"qwen", ChatFormat.QWEN),

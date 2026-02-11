@@ -2,7 +2,7 @@
     "llm": {
         "provider": "Google Gemini",
         "api_key": "YOUR_API_KEY_HERE",
-        "local_model_dir": "VoxAI_Chat_API/models",
+        "local_model_dir": "models/llm",
         "cache_dir": "cache"
     },
     "image": {

@@ -1,14 +1,49 @@
 import json
+import os
 from pathlib import Path
 
-CONFIG_FILE = Path("config.json")
+# Resolve config.json relative to AI_GUI root (parent of utils/), not cwd
+# This ensures IronGate (running from gateway/) still finds the right file
+_AI_GUI_ROOT = Path(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+CONFIG_FILE = _AI_GUI_ROOT / "config.json"
 
 DEFAULT_CONFIG = {
     "llm": {
         "provider": "Google Gemini",
         "api_key": "",
+        "openai_api_key": "",
+        "anthropic_api_key": "",
         "local_model_dir": "models/llm",
         "cache_dir": "cache"
+    },
+    "cloud": {
+        "runpod_api_key": "",
+        "hf_token": "",
+        "pod_id": "",
+        "models": {
+            "Qwen/Qwen2.5-72B-Instruct-AWQ": "Qwen 2.5 72B (AWQ)",
+            "deepseek-ai/DeepSeek-R1-0528-Qwen3-8B": "DeepSeek R1 8B",
+            "mistralai/Mistral-Small-3.2-24B-Instruct-2506": "Mistral Small 24B",
+            "meta-llama/Llama-3.3-70B-Instruct": "Llama 3.3 70B",
+            "Qwen/Qwen3-14B": "Qwen 3 14B"
+        },
+        "gpu_tiers": {
+            "tier_standard": [
+                "NVIDIA A40",
+                "NVIDIA RTX A6000",
+                "NVIDIA RTX 6000 Ada",
+                "NVIDIA A100 80GB PCIe"
+            ],
+            "tier_ultra": [
+                "NVIDIA A100 80GB PCIe",
+                "NVIDIA A100-SXM4-80GB",
+                "NVIDIA H100 80GB HBM3"
+            ]
+        },
+        "keyword_tiers": [
+            [["70b", "72b", "miqu", "grok", "120b"], "tier_ultra"],
+            [["*"], "tier_standard"]
+        ]
     },
     "image": {
         "checkpoint_dir": "models/checkpoints",
@@ -35,12 +70,15 @@ class ConfigManager:
         if not CONFIG_FILE.exists():
             ConfigManager.save_config(DEFAULT_CONFIG)
             return DEFAULT_CONFIG
-        
+
         try:
             with open(CONFIG_FILE, 'r') as f:
                 config = json.load(f)
                 # Merge with default to ensure all keys exist
-                return ConfigManager._merge_defaults(config, DEFAULT_CONFIG)
+                config = ConfigManager._merge_defaults(config, DEFAULT_CONFIG)
+                # Migrate old cloud config keys from llm section
+                config = ConfigManager._migrate_legacy_cloud_config(config)
+                return config
         except Exception:
             return DEFAULT_CONFIG
 
@@ -60,3 +98,27 @@ class ConfigManager:
             elif isinstance(v, dict) and isinstance(user[k], dict):
                 ConfigManager._merge_defaults(user[k], v)
         return user
+
+    @staticmethod
+    def _migrate_legacy_cloud_config(config):
+        """Migrate old llm.runpod_key/runpod_id/runpod_port to cloud section."""
+        llm = config.get("llm", {})
+        cloud = config.get("cloud", {})
+        migrated = False
+
+        if "runpod_key" in llm and llm["runpod_key"]:
+            cloud["runpod_api_key"] = llm.pop("runpod_key")
+            migrated = True
+        if "runpod_id" in llm:
+            cloud["pod_id"] = llm.pop("runpod_id")
+            migrated = True
+        if "runpod_port" in llm:
+            llm.pop("runpod_port")  # Port is no longer user-configurable
+            migrated = True
+
+        if migrated:
+            config["cloud"] = cloud
+            config["llm"] = llm
+            ConfigManager.save_config(config)
+
+        return config

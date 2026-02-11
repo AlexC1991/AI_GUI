@@ -34,8 +34,8 @@ APP_DIR = Path(__file__).parent.absolute()
 sys.path.insert(0, str(APP_DIR))
 from backend.image_generator import GenerationConfig
 
-# Add VoxAI_Chat_API to path
-VOX_API_DIR = APP_DIR / "VoxAI_Chat_API"
+# Add engine to path
+VOX_API_DIR = APP_DIR / "engine"
 if VOX_API_DIR.exists():
     sys.path.insert(0, str(VOX_API_DIR))
 
@@ -111,7 +111,7 @@ class ServerConfig:
     SESSION_TIMEOUT = 24 * 60 * 60  # 24 hours
     
     # Paths
-    MODELS_DIR = APP_DIR / "VoxAI_Chat_API" / "models"
+    MODELS_DIR = APP_DIR / "models" / "llm"
     OUTPUT_DIR = APP_DIR / "outputs" / "images"
     CHECKPOINTS_DIR = APP_DIR / "models" / "checkpoints"
     
@@ -419,12 +419,12 @@ def load_llm_model(model_name: str) -> bool:
         
         # Import and initialize VoxAPI with the new model
         try:
-            # Try direct import first (if VoxAI_Chat_API is in path)
+            # Try direct import first (if engine is in path)
             from vox_api import VoxAPI
         except ImportError:
             try:
                 # Try as submodule
-                from VoxAI_Chat_API.vox_api import VoxAPI
+                from engine.vox_api import VoxAPI
             except ImportError:
                 print("[WebServer] VoxAPI not available")
                 print(f"[WebServer] Looked in: {VOX_API_DIR}")
@@ -455,8 +455,8 @@ def chat_stream(message: str):
             try:
                 from vox_api import VoxAPI
             except ImportError:
-                from VoxAI_Chat_API.vox_api import VoxAPI
-            
+                from engine.vox_api import VoxAPI
+
             models = get_available_llm_models()
             if models:
                 model_path = models[0]['path']
@@ -470,7 +470,7 @@ def chat_stream(message: str):
                 yield "Error: No models found in models directory."
                 return
         except ImportError as e:
-            yield f"Error: VoxAPI not available. Make sure VoxAI_Chat_API is set up. ({e})"
+            yield f"Error: VoxAPI not available. Make sure engine/ is set up. ({e})"
             return
         except Exception as e:
             yield f"Error: Could not initialize LLM backend. ({e})"
