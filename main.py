@@ -16,7 +16,7 @@ import bootstrap  # noqa: F401 - KEEP THIS FIRST!
 # =========================================================
 # STEP 1: BACKEND SETUP - MUST BE BEFORE LLAMA IMPORTS
 # =========================================================
-# This mirrors exactly what vox_core_chat.py does:
+# This mirrors the backend setup from engine/vox_api.py:
 # 1. Set LLAMA_CPP_LIB to point to our custom llama.dll
 # 2. Add DLL directories to PATH
 # 3. Pre-load ggml.dll and call ggml_backend_load_all()
@@ -32,7 +32,7 @@ VOX_API_DIR = APP_DIR / "engine"
 
 def _setup_vox_backend():
     """
-    Set up the VOX-AI backend exactly like vox_core_chat.py does.
+    Set up the VOX-AI backend (DLL loading for llama.cpp).
     
     This MUST run before any import that could touch llama_cpp.
     """

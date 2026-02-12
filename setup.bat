@@ -176,6 +176,6 @@ echo.
 echo  PyTorch: cu118 (ZLUDA compatible)
 echo  ZLUDA:   Patched into torch\lib
 echo.
-echo  Run 'run_gui.bat' to start the application.
+echo  Run 'start.bat' to start the application.
 echo.
 pause

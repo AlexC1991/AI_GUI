@@ -64,7 +64,7 @@ VoxAI isn't just another AI GUI—it's an **agentic framework** that gives local
 | **Failsafe** | Catches refusals and auto-searches |
 | **Natural** | Just ask normally—the AI handles the rest |
 
-> **Note:** Agentic Search requires the Desktop Service to be running (starts from Settings or `python Vox_IronGate/iron_desktop.py`)
+> **Note:** Agentic Search requires the Desktop Service to be running (starts from Settings or `python gateway/iron_desktop.py`)
 
 ### Image Generation
 | Feature | Description |
@@ -116,10 +116,10 @@ copy config.example.json config.json
 # Edit config.json with your API keys (optional)
 
 # Add a GGUF model
-# Place any .gguf file in VoxAI_Chat_API/models/
+# Place any .gguf file in models/llm/
 
 # Launch
-run_gui.bat
+start.bat
 ```
 
 ### DLL Setup (Local LLM)
@@ -134,12 +134,12 @@ Build from [llama.cpp](https://github.com/ggerganov/llama.cpp) with Vulkan, or u
 
 ### Chat Models (GGUF) — Required for Local AI Chat
 
-Place `.gguf` model files in the `VoxAI_Chat_API/models/` folder:
+Place `.gguf` model files in the `models/llm/` folder:
 
 ```
 AI_GUI/
-└── VoxAI_Chat_API/
-    └── models/                          ← Put GGUF files here
+└── models/
+    └── llm/                             ← Put GGUF files here
         ├── Qwen3-8B-Q5_K_M.gguf        ← Recommended for agentic search
         ├── Llama-3.2-3B-Instruct.gguf  ← Lightweight alternative
         └── (any .gguf model works!)
@@ -207,14 +207,14 @@ Access your local AI from anywhere through a secure web tunnel.
 
 ### Setup
 1. Get an [ngrok](https://ngrok.com) auth token
-2. Create `Vox_IronGate/host_config.json`:
+2. Create `gateway/host_config.json`:
    ```json
    {
        "ngrok_token": "YOUR_TOKEN",
        "ngrok_domain": "your-domain.ngrok.app"
    }
    ```
-3. Start: `python Vox_IronGate/iron_host.py`
+3. Start: `python gateway/iron_host.py`
 4. Share the Magic Host Link!
 
 ### Generate Client Packages
@@ -249,9 +249,9 @@ AI_GUI/
 │   └── search_service.py   # Web search
 ├── widgets/                # UI components
 ├── providers/              # LLM providers
-├── VoxAI_Chat_API/         # Local LLM engine
-├── Vox_IronGate/           # Web gateway
-└── models/                 # Model files
+├── engine/                 # Local LLM engine (llama.cpp)
+├── gateway/                # IronGate web gateway
+└── models/                 # Model files (llm/, checkpoints/, loras/)
 ```
 
 ---
