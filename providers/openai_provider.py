@@ -62,7 +62,17 @@ class OpenAIProvider(BaseProvider):
 
     @classmethod
     def list_available_models(cls, api_key: str = None) -> list[str]:
-        """Return curated list of OpenAI LLM chat models."""
+        """Return OpenAI LLM chat models. Fetches from API if key provided."""
+        if api_key and OPENAI_AVAILABLE:
+            try:
+                client = OpenAI(api_key=api_key)
+                models = client.models.list()
+                # Filter for identifying chat models loosely or return all
+                # OpenAI returns many models; returning all is safer for dynamic lists
+                return [m.id for m in models.data if "gpt" in m.id or "o1" in m.id or "o3" in m.id or "o4" in m.id]
+            except Exception as e:
+                print(f"Error fetching OpenAI models: {e}")
+                return cls.CHAT_MODELS.copy()
         return cls.CHAT_MODELS.copy()
 
     @classmethod

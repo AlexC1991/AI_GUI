@@ -10,9 +10,17 @@ CONFIG_FILE = _AI_GUI_ROOT / "config.json"
 DEFAULT_CONFIG = {
     "llm": {
         "provider": "Google Gemini",
-        "api_key": "",
-        "openai_api_key": "",
-        "anthropic_api_key": "",
+        "providers": {
+            "openai": { "api_key": "", "models": [] },
+            "gemini": { "api_key": "", "models": [] },
+            "anthropic": { "api_key": "", "models": [] },
+            "deepseek": { "api_key": "", "models": [] },
+            "kimi": { "api_key": "", "models": [] },
+            "zai": { "api_key": "", "models": [] },
+            "xai": { "api_key": "", "models": [] },
+            "mistral": { "api_key": "", "models": [] },
+            "openrouter": { "api_key": "", "models": [] }
+        },
         "local_model_dir": "models/llm",
         "cache_dir": "cache"
     },
@@ -118,6 +126,38 @@ class ConfigManager:
 
         if migrated:
             config["cloud"] = cloud
+            config["llm"] = llm
+            ConfigManager.save_config(config)
+
+        return ConfigManager._migrate_legacy_keys(config)
+
+    @staticmethod
+    def _migrate_legacy_keys(config):
+        """Migrate old top-level keys to provider specific config."""
+        llm = config.get("llm", {})
+        providers = llm.get("providers", {})
+        migrated = False
+
+        # OpenAI
+        if "openai_api_key" in llm and llm["openai_api_key"]:
+            if "openai" not in providers: providers["openai"] = {"api_key": "", "models": []}
+            providers["openai"]["api_key"] = llm.pop("openai_api_key")
+            migrated = True
+
+        # Gemini
+        if "api_key" in llm and llm["api_key"]:
+            if "gemini" not in providers: providers["gemini"] = {"api_key": "", "models": []}
+            providers["gemini"]["api_key"] = llm.pop("api_key")
+            migrated = True
+
+        # Anthropic
+        if "anthropic_api_key" in llm and llm["anthropic_api_key"]:
+            if "anthropic" not in providers: providers["anthropic"] = {"api_key": "", "models": []}
+            providers["anthropic"]["api_key"] = llm.pop("anthropic_api_key")
+            migrated = True
+
+        if migrated:
+            llm["providers"] = providers
             config["llm"] = llm
             ConfigManager.save_config(config)
 

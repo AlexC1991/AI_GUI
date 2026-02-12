@@ -7,7 +7,7 @@ Adds controls to start/stop the web server directly from the GUI.
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QLabel, QLineEdit, QComboBox,
     QPushButton, QScrollArea, QFrame, QFileDialog, QHBoxLayout, QGroupBox, QMessageBox, QTabWidget, QCheckBox,
-    QSpinBox
+    QSpinBox, QListWidget
 )
 from PySide6.QtCore import Qt, QTimer, QThread, Signal
 from widgets.model_manager_dialog import ModelManagerDialog
@@ -619,94 +619,51 @@ class SettingsView(QScrollArea):
     def create_llm_section(self):
         group = QGroupBox("LLM Configuration (Providers)")
         layout = QVBoxLayout(group)
-        layout.setSpacing(15)
-        layout.setContentsMargins(20, 35, 20, 20)
+        layout.setSpacing(10)
+        layout.setContentsMargins(20, 25, 20, 20)
 
-        key_style = "font-size: 12px; color: #aaa; font-weight: bold;"
-
-        # --- GEMINI API KEY ---
-        layout.addWidget(QLabel("Google Gemini API Key:"))
-        self.api_key_input = QLineEdit()
-        self.api_key_input.setPlaceholderText("AIza...")
-        self.api_key_input.setEchoMode(QLineEdit.Password)
-        layout.addWidget(self.api_key_input)
-
-        # --- OPENAI API KEY ---
-        layout.addWidget(QLabel("OpenAI API Key:"))
-        self.openai_key_input = QLineEdit()
-        self.openai_key_input.setPlaceholderText("sk-...")
-        self.openai_key_input.setEchoMode(QLineEdit.Password)
-        layout.addWidget(self.openai_key_input)
-
-        # --- ANTHROPIC API KEY (future) ---
-        anthropic_label = QLabel("Anthropic API Key (Coming Soon):")
-        anthropic_label.setStyleSheet("color: #666;")
-        layout.addWidget(anthropic_label)
-        self.anthropic_key_input = QLineEdit()
-        self.anthropic_key_input.setPlaceholderText("sk-ant-...")
-        self.anthropic_key_input.setEchoMode(QLineEdit.Password)
-        self.anthropic_key_input.setEnabled(False)
-        self.anthropic_key_input.setStyleSheet("background-color: #1a1a1a; color: #555;")
-        layout.addWidget(self.anthropic_key_input)
-
-        # Keep provider_combo hidden but present for backward compat
-        self.provider_combo = QComboBox()
-        self.provider_combo.addItems(["Google Gemini", "OpenAI", "Anthropic"])
-        self.provider_combo.hide()
-
-        # Fetch Models button + status
-        fetch_row = QHBoxLayout()
-        self.fetch_models_btn = QPushButton("Fetch Available Models")
-        self.fetch_models_btn.setCursor(Qt.PointingHandCursor)
-        self.fetch_models_btn.setStyleSheet("background-color: #006666; padding: 6px;")
-        self.fetch_models_btn.clicked.connect(self._fetch_provider_models)
-        fetch_row.addWidget(self.fetch_models_btn)
-
-        self.fetch_status_label = QLabel("")
-        self.fetch_status_label.setStyleSheet("color: #888; font-size: 11px;")
-        fetch_row.addWidget(self.fetch_status_label)
-        fetch_row.addStretch()
-        layout.addLayout(fetch_row)
-
-        # Available Models list (all providers combined)
-        from PySide6.QtWidgets import QListWidget
-        self.provider_models_list = QListWidget()
-        self.provider_models_list.setMaximumHeight(150)
-        self.provider_models_list.setStyleSheet("""
-            QListWidget {
-                background-color: #252526;
-                border: 1px solid #444;
-                border-radius: 4px;
-                font-size: 12px;
-                color: #ccc;
+        # Provider Tabs
+        self.provider_tabs = QTabWidget()
+        self.provider_tabs.setStyleSheet("""
+            QTabWidget::pane { border: 1px solid #444; background: #252526; }
+            QTabBar::tab {
+                background: #333;
+                color: #bbb;
+                padding: 8px 12px;
+                border-top-left-radius: 4px;
+                border-top-right-radius: 4px;
+                margin-right: 2px;
             }
-            QListWidget::item { padding: 4px 8px; }
-            QListWidget::item:selected { background-color: #006666; color: white; }
+            QTabBar::tab:selected { background: #252526; color: white; border-bottom: 2px solid #008080; }
+            QTabBar::tab:hover { background: #444; }
         """)
-        layout.addWidget(self.provider_models_list)
 
-        models_note = QLabel("Models from all providers with valid keys. Populates the Providers tab in Model Selector.")
-        models_note.setStyleSheet("color: #888; font-size: 10px; font-weight: normal;")
-        layout.addWidget(models_note)
-
-        # Separator
-        line = QFrame()
-        line.setFrameShape(QFrame.HLine)
-        line.setStyleSheet("background-color: #333; margin: 10px 0;")
-        layout.addWidget(line)
-
-        # Load defaults
+        # Config Data
         self.config = ConfigManager.load_config()
         llm_cfg = self.config.get("llm", {})
+        providers_cfg = llm_cfg.get("providers", {})
+        
+        # Define Providers
+        self.providers_data = {
+            "openai": {"name": "OpenAI", "module": "providers.openai_provider", "class": "OpenAIProvider"},
+            "gemini": {"name": "Google Gemini", "module": "providers.gemini_provider", "class": "GeminiProvider"},
+            "anthropic": {"name": "Anthropic", "module": "providers.anthropic_provider", "class": "AnthropicProvider"}, # Placeholder
+            "deepseek": {"name": "DeepSeek", "module": "providers.deepseek_provider", "class": "DeepSeekProvider"},
+            "kimi": {"name": "Kimi (Moonshot)", "module": "providers.kimi_provider", "class": "KimiProvider"},
+            "zai": {"name": "Z.ai (Zhipu)", "module": "providers.zai_provider", "class": "ZaiProvider"},
+            "xai": {"name": "xAI (Grok)", "module": "providers.xai_provider", "class": "XAIProvider"},
+            "mistral": {"name": "Mistral AI", "module": "providers.mistral_provider", "class": "MistralProvider"},
+            "openrouter": {"name": "OpenRouter", "module": "providers.openrouter_provider", "class": "OpenRouterProvider"},
+        }
+        
+        self.provider_widgets = {} # Store widget refs: { "openai": { "key_input": ..., "avail_list": ..., "sel_list": ... } }
 
-        self.api_key_input.setText(llm_cfg.get("api_key", ""))
-        self.openai_key_input.setText(llm_cfg.get("openai_api_key", ""))
-        self.anthropic_key_input.setText(llm_cfg.get("anthropic_api_key", ""))
+        for key, info in self.providers_data.items():
+            current_data = providers_cfg.get(key, {"api_key": "", "models": []})
+            page = self.create_provider_tab(key, info["name"], current_data)
+            self.provider_tabs.addTab(page, info["name"])
 
-        # Auto-populate if any key exists
-        has_any_key = llm_cfg.get("api_key", "") or llm_cfg.get("openai_api_key", "")
-        if has_any_key:
-            QTimer.singleShot(1000, self._fetch_provider_models)
+        layout.addWidget(self.provider_tabs)
 
         # --- LOCAL MODELS MANAGER ---
         mgr_layout = QHBoxLayout()
@@ -731,6 +688,230 @@ class SettingsView(QScrollArea):
         apply_btn = QPushButton("Apply LLM Settings")
         apply_btn.setObjectName("ApplyBtn")
         apply_btn.clicked.connect(self.save_llm_settings)
+        layout.addWidget(apply_btn, 0, Qt.AlignRight)
+
+        self.main_layout.addWidget(group)
+
+    def create_provider_tab(self, provider_key, provider_name, current_data):
+        page = QWidget()
+        layout = QVBoxLayout(page)
+        
+        # API Key
+        key_layout = QHBoxLayout()
+        key_layout.addWidget(QLabel(f"{provider_name} API Key:"))
+        key_input = QLineEdit()
+        key_input.setPlaceholderText(f"Enter {provider_name} API Key")
+        key_input.setEchoMode(QLineEdit.Password)
+        key_input.setText(current_data.get("api_key", ""))
+        key_layout.addWidget(key_input)
+        
+        fetch_btn = QPushButton("Fetch Models")
+        fetch_btn.setCursor(Qt.PointingHandCursor)
+        fetch_btn.setStyleSheet("background-color: #006666; padding: 6px 12px;")
+        # Use lambda with captured variables
+        fetch_btn.clicked.connect(lambda checked=False, k=provider_key: self.fetch_provider_models_tab(k))
+        key_layout.addWidget(fetch_btn)
+        
+        layout.addLayout(key_layout)
+        
+        # Status Label
+        status_label = QLabel("")
+        status_label.setStyleSheet("color: #888; font-size: 11px;")
+        layout.addWidget(status_label)
+
+        # Model Selector Area
+        sel_layout = QHBoxLayout()
+        
+        # Available Models
+        v1 = QVBoxLayout()
+        v1.addWidget(QLabel("Available Models"))
+        avail_list = QListWidget()
+        avail_list.setSelectionMode(QListWidget.MultiSelection)
+        v1.addWidget(avail_list)
+        sel_layout.addLayout(v1)
+        
+        # Controls
+        controls = QVBoxLayout()
+        controls.addStretch()
+        add_btn = QPushButton("→")
+        add_btn.setFixedSize(30, 30)
+        add_btn.clicked.connect(lambda checked=False, k=provider_key: self.add_provider_models(k))
+        controls.addWidget(add_btn)
+        
+        remove_btn = QPushButton("←")
+        remove_btn.setFixedSize(30, 30)
+        remove_btn.clicked.connect(lambda checked=False, k=provider_key: self.remove_provider_models(k))
+        controls.addWidget(remove_btn)
+        controls.addStretch()
+        sel_layout.addLayout(controls)
+        
+        # Selected Models
+        v2 = QVBoxLayout()
+        v2.addWidget(QLabel("Selected (Max 5)"))
+        sel_list = QListWidget()
+        sel_list.setSelectionMode(QListWidget.MultiSelection)
+        v2.addWidget(sel_list)
+        
+        # Populate selected
+        for m in current_data.get("models", []):
+            sel_list.addItem(m)
+            
+        sel_layout.addLayout(v2)
+        
+        layout.addLayout(sel_layout)
+
+        # Store widget references
+        self.provider_widgets[provider_key] = {
+            "key_input": key_input,
+            "avail_list": avail_list,
+            "sel_list": sel_list,
+            "status_label": status_label
+        }
+        
+        return page
+
+    def fetch_provider_models_tab(self, provider_key):
+        widgets = self.provider_widgets[provider_key]
+        api_key = widgets["key_input"].text().strip()
+        label = widgets["status_label"]
+        avail_list = widgets["avail_list"]
+        
+        if not api_key:
+            label.setText("Please enter an API key first.")
+            label.setStyleSheet("color: #f0ad4e;")
+            return
+
+        label.setText("Fetching...")
+        label.setStyleSheet("color: #4ade80;")
+        avail_list.clear()
+        
+        try:
+            prov_info = self.providers_data[provider_key]
+            # Dynamic import
+            import importlib
+            module = importlib.import_module(prov_info["module"])
+            cls = getattr(module, prov_info["class"])
+            
+            # Call static list method
+            models = cls.list_available_models(api_key=api_key)
+            
+            if not models:
+                 label.setText("No models found or error occurred.")
+                 label.setStyleSheet("color: #d9534f;")
+                 return
+                 
+            models.sort()
+            for m in models:
+                avail_list.addItem(m)
+                
+            label.setText(f"Found {len(models)} models.")
+            label.setStyleSheet("color: #4ade80;")
+            
+        except Exception as e:
+            label.setText(f"Error: {e}")
+            label.setStyleSheet("color: #d9534f;")
+            print(f"Fetch error for {provider_key}: {e}")
+
+    def add_provider_models(self, provider_key):
+        widgets = self.provider_widgets[provider_key]
+        avail = widgets["avail_list"]
+        sel = widgets["sel_list"]
+        
+        selected_items = avail.selectedItems()
+        if not selected_items: return
+
+        current_count = sel.count()
+        remaining_slots = 5 - current_count
+        
+        if remaining_slots <= 0:
+            QMessageBox.warning(self, "Limit Reached", "You can only select up to 5 models per provider.")
+            return
+
+        for item in selected_items:
+            if remaining_slots <= 0: break
+            
+            # Check for duplicates
+            exists = False
+            for i in range(sel.count()):
+                if sel.item(i).text() == item.text():
+                    exists = True
+                    break
+            
+            if not exists:
+                sel.addItem(item.text())
+                remaining_slots -= 1
+    
+    def remove_provider_models(self, provider_key):
+        widgets = self.provider_widgets[provider_key]
+        sel = widgets["sel_list"]
+        for item in sel.selectedItems():
+            sel.takeItem(sel.row(item))
+
+    def save_llm_settings(self):
+        cfg = self.config
+        if "llm" not in cfg: cfg["llm"] = {}
+        if "providers" not in cfg["llm"]: cfg["llm"]["providers"] = {}
+        
+        # Save each provider's data
+        for key, widgets in self.provider_widgets.items():
+            api_key = widgets["key_input"].text().strip()
+            models = []
+            for i in range(widgets["sel_list"].count()):
+                models.append(widgets["sel_list"].item(i).text())
+                
+            cfg["llm"]["providers"][key] = {
+                "api_key": api_key,
+                "models": models
+            }
+        
+        # Save other LLM paths
+        cfg["llm"]["local_model_dir"] = self.txt_llm_path.text()
+        cfg["llm"]["cache_dir"] = self.txt_cache_path.text()
+
+        ConfigManager.save_config(cfg)
+        self.llm_settings_saved.emit()
+        QMessageBox.information(self, "Settings Saved", "LLM settings & providers updated successfully!")
+
+    # Legacy method removal or keep structure?
+    # Keeping create_image_section as next method in file
+    def create_image_section(self):
+        group = QGroupBox("Image Generation Paths")
+        layout = QVBoxLayout(group)
+        layout.setSpacing(10)
+        layout.setContentsMargins(20, 35, 20, 20)
+        
+        img_cfg = self.config.get("image", {})
+
+        layout.addWidget(QLabel("Output Directory:"))
+        lyt, self.txt_out_dir = self.create_file_browser_row(img_cfg.get("output_dir", "outputs/images"))
+        layout.addLayout(lyt)
+
+        layout.addWidget(QLabel("Checkpoints Directory:"))
+        lyt, self.txt_ckpt_dir = self.create_file_browser_row(img_cfg.get("checkpoint_dir", "models/checkpoints"))
+        layout.addLayout(lyt)
+
+        layout.addWidget(QLabel("LoRA Directory:"))
+        lyt, self.txt_lora_dir = self.create_file_browser_row(img_cfg.get("lora_dir", "models/loras"))
+        layout.addLayout(lyt)
+
+        layout.addWidget(QLabel("VAE Directory:"))
+        lyt, self.txt_vae_dir = self.create_file_browser_row(img_cfg.get("vae_dir", "models/vae"))
+        layout.addLayout(lyt)
+
+        layout.addWidget(QLabel("Text Encoder Directory:"))
+        lyt, self.txt_text_enc_dir = self.create_file_browser_row(img_cfg.get("text_encoder_dir", "models/text_encoders"))
+        layout.addLayout(lyt)
+
+        # Prompt Enhancement Model
+        layout.addWidget(QLabel("Prompt Enhancement Model:"))
+        self.img_model_combo = QComboBox()
+        self.img_model_combo.addItems(["Llama 3 (8B)", "Mistral 7B", "Gemini Pro (API)"])
+        layout.addWidget(self.img_model_combo)
+
+        # Apply
+        apply_btn = QPushButton("Apply Image Settings")
+        apply_btn.setObjectName("ApplyBtn")
+        apply_btn.clicked.connect(self.save_image_settings)
         layout.addWidget(apply_btn, 0, Qt.AlignRight)
 
         self.main_layout.addWidget(group)
@@ -888,44 +1069,7 @@ class SettingsView(QScrollArea):
         ConfigManager.save_config(cfg)
         QMessageBox.information(self, "Settings Saved", "Cloud GPU settings updated!")
 
-    def _fetch_provider_models(self):
-        """Fetch available models from ALL providers with valid API keys."""
-        gemini_key = self.api_key_input.text().strip()
-        openai_key = self.openai_key_input.text().strip()
 
-        if not gemini_key and not openai_key:
-            self.fetch_status_label.setText("Enter at least one API key")
-            self.fetch_status_label.setStyleSheet("color: #f0ad4e; font-size: 11px;")
-            return
-
-        self.fetch_status_label.setText("Fetching...")
-        self.fetch_status_label.setStyleSheet("color: #4ade80; font-size: 11px;")
-        self.provider_models_list.clear()
-
-        all_models = []
-
-        try:
-            # Gemini models
-            if gemini_key:
-                from providers.gemini_provider import GeminiProvider
-                for name in GeminiProvider.list_available_models(api_key=gemini_key):
-                    all_models.append(f"{name}  [Gemini]")
-
-            # OpenAI models
-            if openai_key:
-                from providers.openai_provider import OpenAIProvider
-                for name in OpenAIProvider.list_available_models(api_key=openai_key):
-                    all_models.append(f"{name}  [OpenAI]")
-
-            for display in all_models:
-                self.provider_models_list.addItem(display)
-
-            self.fetch_status_label.setText(f"Found {len(all_models)} models")
-            self.fetch_status_label.setStyleSheet("color: #4ade80; font-size: 11px;")
-
-        except Exception as e:
-            self.fetch_status_label.setText(f"Error: {e}")
-            self.fetch_status_label.setStyleSheet("color: #d9534f; font-size: 11px;")
 
     def open_model_manager(self):
         dlg = ModelManagerDialog(self)

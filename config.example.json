@@ -1,17 +1,91 @@
 {
     "llm": {
         "provider": "Google Gemini",
-        "api_key": "YOUR_API_KEY_HERE",
+        "providers": {
+            "openai": {
+                "api_key": "",
+                "models": []
+            },
+            "gemini": {
+                "api_key": "",
+                "models": []
+            },
+            "anthropic": {
+                "api_key": "",
+                "models": []
+            },
+            "deepseek": {
+                "api_key": "",
+                "models": []
+            },
+            "kimi": {
+                "api_key": "",
+                "models": []
+            },
+            "zai": {
+                "api_key": "",
+                "models": []
+            },
+            "xai": {
+                "api_key": "",
+                "models": []
+            },
+            "mistral": {
+                "api_key": "",
+                "models": []
+            }
+        },
         "local_model_dir": "models/llm",
         "cache_dir": "cache"
+    },
+    "cloud": {
+        "runpod_api_key": "",
+        "hf_token": "",
+        "pod_id": "",
+        "models": {
+            "Qwen/Qwen2.5-72B-Instruct-AWQ": "Qwen 2.5 72B (AWQ)",
+            "deepseek-ai/DeepSeek-R1-0528-Qwen3-8B": "DeepSeek R1 8B",
+            "mistralai/Mistral-Small-3.2-24B-Instruct-2506": "Mistral Small 24B",
+            "meta-llama/Llama-3.3-70B-Instruct": "Llama 3.3 70B",
+            "Qwen/Qwen3-14B": "Qwen 3 14B"
+        },
+        "gpu_tiers": {
+            "tier_standard": [
+                "NVIDIA A40",
+                "NVIDIA RTX A6000",
+                "NVIDIA RTX 6000 Ada",
+                "NVIDIA A100 80GB PCIe"
+            ],
+            "tier_ultra": [
+                "NVIDIA A100 80GB PCIe",
+                "NVIDIA A100-SXM4-80GB",
+                "NVIDIA H100 80GB HBM3"
+            ]
+        },
+        "keyword_tiers": [
+            [
+                [
+                    "70b",
+                    "72b",
+                    "miqu",
+                    "grok",
+                    "120b"
+                ],
+                "tier_ultra"
+            ],
+            [
+                [
+                    "*"
+                ],
+                "tier_standard"
+            ]
+        ]
     },
     "image": {
         "checkpoint_dir": "models/checkpoints",
         "lora_dir": "models/loras",
         "output_dir": "outputs/images",
-        "refiner_model": "None",
-        "vae_dir": "models/vae",
-        "text_encoder_dir": "models/text_encoders"
+        "refiner_model": "None"
     },
     "remote": {
         "gpu_ip": "",
