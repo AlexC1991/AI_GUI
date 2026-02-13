@@ -421,10 +421,10 @@ class MainWindow(QMainWindow):
                 api_key = prov_data.get("api_key", "")
                 selected_models = prov_data.get("models", [])
 
-                if not api_key or not selected_models:
+                if not api_key:
                     continue
 
-                if cfg_key == "openrouter":
+                if cfg_key == "openrouter" and selected_models:
                     # Explode OpenRouter into per-company tiles
                     company_buckets = {}
                     for name in selected_models:

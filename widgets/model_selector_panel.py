@@ -435,9 +435,6 @@ class ProviderTabWidget(QWidget):
             display_name = data["display_name"]
             models = data.get("models", [])
 
-            if not models:
-                continue
-
             # Filter: match provider name or any model name
             if ft:
                 name_match = ft in display_name.lower()
@@ -478,6 +475,12 @@ class ProviderTabWidget(QWidget):
         from utils.config_manager import ConfigManager
 
         self._drill_list.clear()
+
+        if not models:
+            item = QListWidgetItem("No models selected.\nAdd models in Settings \u2192 Providers.")
+            item.setFlags(Qt.NoItemFlags)
+            self._drill_list.addItem(item)
+            return
 
         for m in models:
             self._add_model_item(self._drill_list, m, ConfigManager)
