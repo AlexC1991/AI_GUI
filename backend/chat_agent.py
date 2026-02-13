@@ -595,10 +595,20 @@ class ChatAgent(QObject):
     def _get_api_key(self):
         """Return the API key for the current provider."""
         from utils.config_manager import ConfigManager
-        llm_cfg = ConfigManager.load_config().get("llm", {})
+        from providers import PROVIDER_REGISTRY
+        config = ConfigManager.load_config()
+        llm_cfg = config.get("llm", {})
+        providers_cfg = llm_cfg.get("providers", {})
         provider = self._get_provider_type()
+
+        # Look up via the registry: match display name → config key
+        for cfg_key, (_cls, display_name) in PROVIDER_REGISTRY.items():
+            if provider in (display_name, cfg_key):
+                key = providers_cfg.get(cfg_key, {}).get("api_key", "")
+                if key:
+                    return key
+
+        # Fallback to legacy keys for backward compat
         if provider == "OpenAI":
             return llm_cfg.get("openai_api_key", "")
-        elif provider == "Gemini":
-            return llm_cfg.get("api_key", "")
         return llm_cfg.get("api_key", "")

@@ -33,6 +33,10 @@
             "mistral": {
                 "api_key": "",
                 "models": []
+            },
+            "openrouter": {
+                "api_key": "",
+                "models": []
             }
         },
         "local_model_dir": "models/llm",

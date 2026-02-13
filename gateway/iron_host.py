@@ -1237,35 +1237,39 @@ async def chat_stream_endpoint(request: Request):
         def event_generator():
             if source == "cloud":
                 # Cloud GPU streaming via CloudStreamer
-                for event in ai_bridge.stream_cloud(
-                    message, model_id=model,
-                    history=history, system_prompt=system_prompt
-                ):
-                    yield f"data: {_json.dumps(event)}\n\n"
+                try:
+                    for event in ai_bridge.stream_cloud(
+                        message, model_id=model,
+                        history=history, system_prompt=system_prompt
+                    ):
+                        yield f"data: {_json.dumps(event)}\n\n"
+                except Exception as e:
+                    print(f"[IronGate] Cloud stream error: {e}")
+                    yield f"data: {_json.dumps({'type': 'error', 'text': f'[Cloud Error] {e}'})}\n\n"
 
             elif source == "provider":
-                # Provider streaming (Gemini, OpenAI, etc.) — uses provider's own API
+                # Provider streaming — uses provider's own API
                 try:
                     from utils.config_manager import ConfigManager
                     from providers.base_provider import Message
-                    llm_cfg = ConfigManager.load_config().get("llm", {})
+                    from providers import PROVIDER_REGISTRY
+                    config = ConfigManager.load_config()
+                    llm_cfg = config.get("llm", {})
+                    providers_cfg = llm_cfg.get("providers", {})
 
-                    # Determine provider from explicit field, or infer from model name
-                    prov = provider_name
-                    if not prov:
-                        if model and (model.startswith("gpt-") or model.startswith("o3") or model.startswith("o4")):
-                            prov = "OpenAI"
-                        else:
-                            prov = "Gemini"
+                    prov = provider_name or "Gemini"
 
-                    if prov == "OpenAI":
-                        from providers.openai_provider import OpenAIProvider
-                        api_key = llm_cfg.get("openai_api_key", "")
-                        llm_provider = OpenAIProvider(model=model, api_key=api_key)
-                    else:
-                        from providers.gemini_provider import GeminiProvider
-                        api_key = llm_cfg.get("api_key", "")
-                        llm_provider = GeminiProvider(model=model, api_key=api_key)
+                    # Resolve provider class and API key via registry
+                    llm_provider = None
+                    for cfg_key, (cls, display_name) in PROVIDER_REGISTRY.items():
+                        if prov in (display_name, cfg_key, cls.__name__):
+                            api_key = providers_cfg.get(cfg_key, {}).get("api_key", "")
+                            llm_provider = cls(model=model, api_key=api_key)
+                            break
+
+                    if not llm_provider:
+                        yield f"data: {_json.dumps({'type': 'error', 'text': f'Unknown provider: {prov}'})}\n\n"
+                        return
 
                     msg_history = [Message(role=m["role"], content=m["content"]) for m in history] if history else None
 
@@ -1286,16 +1290,21 @@ async def chat_stream_endpoint(request: Request):
                     yield f"data: {_json.dumps({'type': 'done', 'stats': {'tokens': token_count, 'duration': round(duration, 2), 'speed': round(speed, 2)}})}\n\n"
 
                 except Exception as e:
+                    print(f"[IronGate] Provider stream error: {e}")
                     yield f"data: {_json.dumps({'type': 'error', 'text': f'[Provider Error] {e}'})}\n\n"
 
             else:
                 # Local .gguf model via VoxAPI
-                if model:
-                    ai_bridge.set_model(model)
-                for event in ai_bridge.stream_the_brain(
-                    message, history=history, system_prompt=system_prompt
-                ):
-                    yield f"data: {_json.dumps(event)}\n\n"
+                try:
+                    if model:
+                        ai_bridge.set_model(model)
+                    for event in ai_bridge.stream_the_brain(
+                        message, history=history, system_prompt=system_prompt
+                    ):
+                        yield f"data: {_json.dumps(event)}\n\n"
+                except Exception as e:
+                    print(f"[IronGate] Local stream error: {e}")
+                    yield f"data: {_json.dumps({'type': 'error', 'text': f'[Local Error] {e}'})}\n\n"
 
         return StreamingResponse(event_generator(), media_type="text/event-stream")
     except Exception as e:

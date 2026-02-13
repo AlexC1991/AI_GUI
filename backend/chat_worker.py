@@ -5,6 +5,7 @@ from providers.gemini_provider import GeminiProvider
 from providers.vox_provider import VoxProvider
 from providers.cloud_streamer import CloudStreamer
 from providers.base_provider import Message
+from providers import PROVIDER_REGISTRY
 
 class ChatWorker(QThread):
     chunk_received = Signal(str)
@@ -154,8 +155,17 @@ class ChatWorker(QThread):
                 if self.session_id and hasattr(self._provider, 'set_session'):
                     self._provider.set_session(self.session_id)
             else:
-                self.error.emit(f"Unknown provider: {self.provider_type}")
-                return
+                # --- Dynamic provider resolution via registry ---
+                resolved = False
+                for cfg_key, (cls, display_name) in PROVIDER_REGISTRY.items():
+                    if self.provider_type in (display_name, cfg_key, cls.__name__):
+                        self._provider = cls(model=self.model_name, api_key=self.api_key)
+                        print(f"[ChatWorker] Using {display_name} provider for {self.model_name}")
+                        resolved = True
+                        break
+                if not resolved:
+                    self.error.emit(f"Unknown provider: {self.provider_type}")
+                    return
 
             # Convert history dicts to Message objects if needed
             msg_history = []

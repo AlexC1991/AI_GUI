@@ -410,21 +410,21 @@ class MainWindow(QMainWindow):
         try:
             config = ConfigManager.load_config()
             llm_cfg = config.get("llm", {})
+            providers_cfg = llm_cfg.get("providers", {})
             all_provider_models = []
 
-            # Gemini models
-            gemini_key = llm_cfg.get("api_key", "")
-            if gemini_key:
-                from providers.gemini_provider import GeminiProvider
-                for name in GeminiProvider.list_available_models(api_key=gemini_key):
-                    all_provider_models.append({"name": name, "provider": "Gemini"})
+            from providers import PROVIDER_REGISTRY
 
-            # OpenAI models
-            openai_key = llm_cfg.get("openai_api_key", "")
-            if openai_key:
-                from providers.openai_provider import OpenAIProvider
-                for name in OpenAIProvider.list_available_models(api_key=openai_key):
-                    all_provider_models.append({"name": name, "provider": "OpenAI"})
+            for cfg_key, (cls, display_name) in PROVIDER_REGISTRY.items():
+                prov_data = providers_cfg.get(cfg_key, {})
+                api_key = prov_data.get("api_key", "")
+                selected_models = prov_data.get("models", [])
+
+                if not api_key or not selected_models:
+                    continue
+
+                for name in selected_models:
+                    all_provider_models.append({"name": name, "provider": display_name})
 
             if all_provider_models and hasattr(self, 'model_panel'):
                 self.model_panel.set_provider_models(all_provider_models)
