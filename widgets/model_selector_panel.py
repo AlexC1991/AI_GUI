@@ -59,18 +59,8 @@ MODEL_STATS_DB = {
     r"(?i)deepseek.*67[bB]": {"params": "67B",  "vram": "~48 GB",  "speed": "~15 t/s"},
 }
 
-# Provider accent colors for tiles
-PROVIDER_COLORS = {
-    "gemini":     "#4285F4",
-    "openai":     "#10A37F",
-    "openrouter": "#9B59B6",
-    "deepseek":   "#1E88E5",
-    "kimi":       "#FF6F00",
-    "mistral":    "#FF7000",
-    "xai":        "#FFFFFF",
-    "zai":        "#00BCD4",
-    "anthropic":  "#D4A574",
-}
+# Unified tile accent color (matches app theme)
+TILE_ACCENT = "#006666"
 
 # OpenRouter model ID → friendly company name
 OPENROUTER_COMPANY_NAMES = {
@@ -223,13 +213,12 @@ class ProviderTile(QFrame):
     """A ~120x90px clickable tile representing one provider."""
     clicked = Signal(str)  # emits provider config key
 
-    def __init__(self, config_key, display_name, model_count, has_key, parent=None):
+    def __init__(self, config_key, display_name, model_count, parent=None):
         super().__init__(parent)
         self._config_key = config_key
         self._display_name = display_name
         self._model_count = model_count
-        self._has_key = has_key
-        self._accent = QColor(PROVIDER_COLORS.get(config_key, "#006666"))
+        self._accent = QColor(TILE_ACCENT)
         self._hovered = False
 
         self.setFixedSize(120, 90)
@@ -241,12 +230,8 @@ class ProviderTile(QFrame):
         p.setRenderHint(QPainter.Antialiasing)
         r = self.rect().adjusted(2, 2, -2, -2)
 
-        # Dimmed if no key or no models
-        dimmed = not self._has_key or self._model_count == 0
-        opacity = 0.4 if dimmed else 1.0
-
         # Background
-        if self._hovered and not dimmed:
+        if self._hovered:
             p.setBrush(QColor("#3E3E3E"))
             p.setPen(QPen(QColor("#006666"), 2))
         else:
@@ -258,45 +243,36 @@ class ProviderTile(QFrame):
         circle_r = 20
         cx = r.center().x()
         cy = r.top() + 28
-        accent = QColor(self._accent)
-        if dimmed:
-            accent.setAlpha(100)
-        p.setBrush(accent)
+        p.setBrush(self._accent)
         p.setPen(Qt.NoPen)
         p.drawEllipse(cx - circle_r, cy - circle_r, circle_r * 2, circle_r * 2)
 
         # Initial letter
         letter = self._display_name[0].upper()
         p.setFont(QFont("Segoe UI", 16, QFont.Bold))
-        text_color = QColor("#1E1E1E") if self._accent.lightnessF() > 0.5 else QColor("#FFFFFF")
-        if dimmed:
-            text_color.setAlpha(150)
-        p.setPen(text_color)
+        p.setPen(QColor("#FFFFFF"))
         p.drawText(cx - circle_r, cy - circle_r, circle_r * 2, circle_r * 2,
                    Qt.AlignCenter, letter)
 
         # Provider name
-        name_color = QColor("#E0E0E0") if not dimmed else QColor("#666666")
         p.setFont(QFont("Segoe UI", 9, QFont.Bold))
-        p.setPen(name_color)
+        p.setPen(QColor("#E0E0E0"))
         p.drawText(r.adjusted(4, 0, -4, -14), Qt.AlignBottom | Qt.AlignHCenter,
                    self._display_name)
 
         # Model count badge
-        if self._model_count > 0:
-            badge_text = f"{self._model_count} model{'s' if self._model_count != 1 else ''}"
-            badge_font = QFont("Segoe UI", 7)
-            p.setFont(badge_font)
-            fm = QFontMetrics(badge_font)
-            tw = fm.horizontalAdvance(badge_text) + 10
-            bx = cx - tw // 2
-            by = r.bottom() - 14
-            badge_color = QColor("#006666") if not dimmed else QColor("#333333")
-            p.setBrush(badge_color)
-            p.setPen(Qt.NoPen)
-            p.drawRoundedRect(bx, by, tw, 14, 7, 7)
-            p.setPen(QColor("#FFFFFF") if not dimmed else QColor("#666666"))
-            p.drawText(bx, by, tw, 14, Qt.AlignCenter, badge_text)
+        badge_text = f"{self._model_count} model{'s' if self._model_count != 1 else ''}"
+        badge_font = QFont("Segoe UI", 7)
+        p.setFont(badge_font)
+        fm = QFontMetrics(badge_font)
+        tw = fm.horizontalAdvance(badge_text) + 10
+        bx = cx - tw // 2
+        by = r.bottom() - 14
+        p.setBrush(QColor("#006666"))
+        p.setPen(Qt.NoPen)
+        p.drawRoundedRect(bx, by, tw, 14, 7, 7)
+        p.setPen(QColor("#FFFFFF"))
+        p.drawText(bx, by, tw, 14, Qt.AlignCenter, badge_text)
 
         p.end()
 
@@ -309,8 +285,7 @@ class ProviderTile(QFrame):
         self.update()
 
     def mousePressEvent(self, event):
-        if self._has_key and self._model_count > 0:
-            self.clicked.emit(self._config_key)
+        self.clicked.emit(self._config_key)
 
 
 # -------------------------------------------------------
@@ -459,7 +434,9 @@ class ProviderTabWidget(QWidget):
         for cfg_key, data in self._provider_data.items():
             display_name = data["display_name"]
             models = data.get("models", [])
-            has_key = data.get("has_key", False)
+
+            if not models:
+                continue
 
             # Filter: match provider name or any model name
             if ft:
@@ -468,7 +445,7 @@ class ProviderTabWidget(QWidget):
                 if not name_match and not model_match:
                     continue
 
-            tile = ProviderTile(cfg_key, display_name, len(models), has_key)
+            tile = ProviderTile(cfg_key, display_name, len(models))
             tile.clicked.connect(self._drill_into)
             self._grid_layout.addWidget(tile, row, col)
             self._tiles.append(tile)
@@ -476,6 +453,14 @@ class ProviderTabWidget(QWidget):
             if col >= 3:
                 col = 0
                 row += 1
+
+        # Empty state
+        if not self._tiles:
+            hint = QLabel("No providers configured.\nAdd API keys and models in Settings.")
+            hint.setStyleSheet("color: #666; font-size: 12px; padding: 20px;")
+            hint.setAlignment(Qt.AlignCenter)
+            hint.setWordWrap(True)
+            self._grid_layout.addWidget(hint, 0, 0, 1, 3)
 
         # Spacer at bottom
         self._grid_layout.setRowStretch(row + 1, 1)
@@ -494,27 +479,8 @@ class ProviderTabWidget(QWidget):
 
         self._drill_list.clear()
 
-        if config_key == "openrouter":
-            # Group by company
-            groups = {}
-            for m in models:
-                model_id = m.get("filename", m.get("display", ""))
-                slug = model_id.split("/")[0] if "/" in model_id else "other"
-                company = OPENROUTER_COMPANY_NAMES.get(slug, slug.title())
-                groups.setdefault(company, []).append(m)
-
-            for company in sorted(groups.keys()):
-                # Section header
-                header_item = QListWidgetItem(company)
-                header_item.setData(ROLE_SECTION, True)
-                header_item.setFlags(Qt.NoItemFlags)
-                self._drill_list.addItem(header_item)
-
-                for m in groups[company]:
-                    self._add_model_item(self._drill_list, m, ConfigManager)
-        else:
-            for m in models:
-                self._add_model_item(self._drill_list, m, ConfigManager)
+        for m in models:
+            self._add_model_item(self._drill_list, m, ConfigManager)
 
     def _add_model_item(self, list_widget, model_data, ConfigManager):
         display = model_data.get("display", "Unknown")

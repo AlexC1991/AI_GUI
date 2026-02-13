@@ -413,6 +413,7 @@ class MainWindow(QMainWindow):
             providers_cfg = llm_cfg.get("providers", {})
 
             from providers import PROVIDER_REGISTRY
+            from widgets.model_selector_panel import OPENROUTER_COMPANY_NAMES
 
             grouped = {}
             for cfg_key, (cls, display_name) in PROVIDER_REGISTRY.items():
@@ -420,20 +421,48 @@ class MainWindow(QMainWindow):
                 api_key = prov_data.get("api_key", "")
                 selected_models = prov_data.get("models", [])
 
-                models_list = []
-                for name in selected_models:
-                    models_list.append({
-                        "mode": "provider",
-                        "display": name,
-                        "filename": name,
-                        "provider": display_name,
-                    })
+                if not api_key or not selected_models:
+                    continue
 
-                grouped[cfg_key] = {
-                    "display_name": display_name,
-                    "has_key": bool(api_key),
-                    "models": models_list,
-                }
+                if cfg_key == "openrouter":
+                    # Explode OpenRouter into per-company tiles
+                    company_buckets = {}
+                    for name in selected_models:
+                        slug = name.split("/")[0] if "/" in name else "other"
+                        company = OPENROUTER_COMPANY_NAMES.get(slug, slug.title())
+                        company_buckets.setdefault(company, []).append(name)
+
+                    for company, names in company_buckets.items():
+                        tile_key = f"openrouter:{company}"
+                        models_list = []
+                        for n in names:
+                            # Strip company prefix for cleaner display
+                            short = n.split("/", 1)[1] if "/" in n else n
+                            models_list.append({
+                                "mode": "provider",
+                                "display": short,
+                                "filename": n,
+                                "provider": "OpenRouter",
+                            })
+                        grouped[tile_key] = {
+                            "display_name": company,
+                            "has_key": True,
+                            "models": models_list,
+                        }
+                else:
+                    models_list = []
+                    for name in selected_models:
+                        models_list.append({
+                            "mode": "provider",
+                            "display": name,
+                            "filename": name,
+                            "provider": display_name,
+                        })
+                    grouped[cfg_key] = {
+                        "display_name": display_name,
+                        "has_key": True,
+                        "models": models_list,
+                    }
 
             if hasattr(self, 'model_panel'):
                 self.model_panel.set_provider_models(grouped)
