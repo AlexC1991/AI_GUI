@@ -199,7 +199,10 @@ class MainWindow(QMainWindow):
                 filename = name_match.group(1)
             else:
                 ext = self.code_panel._get_extension(lang) if hasattr(self.code_panel, '_get_extension') else '.txt'
-                filename = f"snippet_{idx + 1}{ext}"
+                # Use language display name for better card titles
+                from widgets.file_card import LANG_DISPLAY
+                lang_name = LANG_DISPLAY.get(lang, lang.capitalize() if lang else 'Text')
+                filename = f"{lang_name} Script{ext}" if lang != "text" else f"snippet_{idx + 1}{ext}"
 
             if filename not in named_files:
                 named_files[filename] = {'lang': lang, 'codes': [], 'match_indices': []}

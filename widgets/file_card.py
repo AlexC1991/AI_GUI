@@ -7,9 +7,9 @@ the message bubble. Clicking a card opens the CodePanel.
 
 from PySide6.QtWidgets import (
     QWidget, QHBoxLayout, QVBoxLayout, QLabel, QFrame,
-    QPushButton, QFileDialog
+    QPushButton, QFileDialog, QApplication
 )
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import Qt, Signal, QTimer
 
 
 LANG_EXTENSIONS = {
@@ -120,6 +120,23 @@ class FileCard(QFrame):
 
         layout.addLayout(info_layout, 1)
 
+        # Copy button
+        self.copy_btn = QPushButton("\U0001F4CB")
+        self.copy_btn.setFixedSize(28, 28)
+        self.copy_btn.setToolTip("Copy to clipboard")
+        self.copy_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #333;
+                color: white;
+                border: 1px solid #444;
+                border-radius: 4px;
+                font-size: 13px;
+            }
+            QPushButton:hover { background-color: #444; }
+        """)
+        self.copy_btn.clicked.connect(self._copy)
+        layout.addWidget(self.copy_btn)
+
         # Download button
         dl_btn = QPushButton("\u2B73")
         dl_btn.setFixedSize(28, 28)
@@ -141,6 +158,18 @@ class FileCard(QFrame):
         if event.button() == Qt.LeftButton:
             self.clicked.emit(self.filename, self.content, self.language)
         super().mousePressEvent(event)
+
+    def _copy(self):
+        """Copy code content to clipboard with visual feedback."""
+        clipboard = QApplication.clipboard()
+        clipboard.setText(self.content)
+        original = self.copy_btn.text()
+        self.copy_btn.setText("\u2705")
+        self.copy_btn.setToolTip("Copied!")
+        QTimer.singleShot(1500, lambda: (
+            self.copy_btn.setText(original),
+            self.copy_btn.setToolTip("Copy to clipboard")
+        ))
 
     def _download(self):
         file_path, _ = QFileDialog.getSaveFileName(

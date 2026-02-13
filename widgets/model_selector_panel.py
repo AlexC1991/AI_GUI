@@ -589,11 +589,14 @@ class ModelSelectorPanel(QFrame):
                 border: none;
                 background-color: #252526;
             }
+            QTabBar {
+                qproperty-expanding: 1;
+            }
             QTabBar::tab {
                 background-color: #2E2E2E;
                 color: #888;
                 border: 1px solid #3C3C3C;
-                padding: 8px 12px;
+                padding: 8px 0px;
                 margin-right: 2px;
                 border-top-left-radius: 4px;
                 border-top-right-radius: 4px;
