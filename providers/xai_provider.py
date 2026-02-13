@@ -31,14 +31,23 @@ class XAIProvider(BaseProvider):
             print(f"xAI configuration error: {e}")
             self._configured = False
 
+    # Model IDs that are NOT usable for chat completions (image gen, video gen, embedding)
+    _EXCLUDED_PATTERNS = ["image", "imagine", "video", "embed"]
+
     @staticmethod
     def list_available_models(api_key: str) -> list[str]:
-        """Fetch models from xAI."""
+        """Fetch chat-compatible models from xAI."""
         if not OPENAI_AVAILABLE: return []
         try:
             client = OpenAI(api_key=api_key, base_url="https://api.x.ai/v1")
             models = client.models.list()
-            return [m.id for m in models.data]
+            result = []
+            for m in models.data:
+                mid = m.id.lower()
+                if any(pat in mid for pat in XAIProvider._EXCLUDED_PATTERNS):
+                    continue
+                result.append(m.id)
+            return result
         except Exception as e:
             print(f"Error fetching xAI models: {e}")
             return []

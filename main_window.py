@@ -543,13 +543,13 @@ class MainWindow(QMainWindow):
         # Video models (Sora needs OpenAI key, Veo needs Gemini key)
         if is_video:
             if selected_model.startswith("sora-"):
-                openai_key = llm_cfg.get("openai_api_key", "")
+                openai_key = ConfigManager.get_provider_key("openai")
             elif selected_model.startswith("veo-"):
-                gemini_key = llm_cfg.get("api_key", "")
+                gemini_key = ConfigManager.get_provider_key("gemini")
         elif view.is_gemini_selected():
-            gemini_key = llm_cfg.get("api_key", "")
+            gemini_key = ConfigManager.get_provider_key("gemini")
         elif view.is_openai_selected():
-            openai_key = llm_cfg.get("openai_api_key", "")
+            openai_key = ConfigManager.get_provider_key("openai")
 
         self.image_worker.setup(
             prompt=view.get_positive_prompt(),

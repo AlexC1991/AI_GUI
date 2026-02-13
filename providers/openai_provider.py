@@ -214,11 +214,15 @@ class OpenAIProvider(BaseProvider):
             raise RuntimeError("OpenAI provider not configured.")
 
         # Sora API uses 'seconds' (not duration) and 'size' (not resolution)
-        # Valid seconds: 4, 8, 12  |  Valid sizes: 1280x720, 720x1280, 1792x1024, 1024x1792
+        # Valid seconds: "4", "8", "12" (must be STRING)
+        # Valid sizes: 1280x720, 720x1280, 1792x1024, 1024x1792
+        # Clamp to nearest valid value
+        valid_secs = [4, 8, 12]
+        clamped = min(valid_secs, key=lambda v: abs(v - int(duration)))
         video = self._client.videos.create(
             model=model,
             prompt=prompt,
-            seconds=duration,
+            seconds=str(clamped),
             size=resolution,
         )
         return video.id
@@ -241,10 +245,8 @@ class OpenAIProvider(BaseProvider):
         if not self._configured:
             raise RuntimeError("OpenAI provider not configured.")
 
-        response = self._client.videos.content(video_id)
-        with open(save_path, "wb") as f:
-            for chunk in response.iter_bytes():
-                f.write(chunk)
+        response = self._client.videos.download_content(video_id)
+        response.stream_to_file(save_path)
 
     def create_and_wait_video(self, prompt: str, model: str = "sora-2",
                               duration: int = 4, resolution: str = "1280x720",

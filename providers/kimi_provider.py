@@ -31,14 +31,29 @@ class KimiProvider(BaseProvider):
             print(f"Kimi configuration error: {e}")
             self._configured = False
 
+    # Only include models that are actually Moonshot/Kimi chat models
+    _ALLOWED_PREFIXES = ["moonshot-", "kimi-"]
+    # Exclude embedding, file, etc.
+    _EXCLUDED_PATTERNS = ["embedding", "file"]
+
     @staticmethod
     def list_available_models(api_key: str) -> list[str]:
-        """Fetch models from Moonshot API."""
+        """Fetch chat-compatible models from Moonshot API."""
         if not OPENAI_AVAILABLE: return []
         try:
             client = OpenAI(api_key=api_key, base_url="https://api.moonshot.cn/v1")
             models = client.models.list()
-            return [m.id for m in models.data]
+            result = []
+            for m in models.data:
+                mid = m.id.lower()
+                # Only include Moonshot/Kimi models (filter out foreign models like qwen)
+                if KimiProvider._ALLOWED_PREFIXES:
+                    if not any(mid.startswith(p) for p in KimiProvider._ALLOWED_PREFIXES):
+                        continue
+                if any(pat in mid for pat in KimiProvider._EXCLUDED_PATTERNS):
+                    continue
+                result.append(m.id)
+            return result
         except Exception as e:
             print(f"Error fetching Kimi models: {e}")
             return []

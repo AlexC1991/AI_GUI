@@ -31,14 +31,23 @@ class ZaiProvider(BaseProvider):
             print(f"Z.ai configuration error: {e}")
             self._configured = False
 
+    # Model IDs that are NOT usable for chat completions (embeddings, image, video, code-interp, etc.)
+    _EXCLUDED_PATTERNS = ["embedding", "cogview", "cogvideo", "charglm", "codegeex", "alltools"]
+
     @staticmethod
     def list_available_models(api_key: str) -> list[str]:
-        """Fetch models from ZhipuAI."""
+        """Fetch chat-compatible models from ZhipuAI."""
         if not OPENAI_AVAILABLE: return []
         try:
             client = OpenAI(api_key=api_key, base_url="https://open.bigmodel.cn/api/paas/v4/")
             models = client.models.list()
-            return [m.id for m in models.data]
+            result = []
+            for m in models.data:
+                mid = m.id.lower()
+                if any(pat in mid for pat in ZaiProvider._EXCLUDED_PATTERNS):
+                    continue
+                result.append(m.id)
+            return result
         except Exception as e:
             print(f"Error fetching Z.ai models: {e}")
             return []

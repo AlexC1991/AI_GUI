@@ -554,7 +554,11 @@ class ChatAgent(QObject):
         if not self.search_active:
             # Flush any held-back text so partial output isn't lost
             self._flush_holdback()
-            self.chat_display.update_streaming_message(f"\n[Error: {err}]")
+            # Start a streaming message if one isn't already open
+            if not hasattr(self.mw, '_chat_streaming_started') or not self.mw._chat_streaming_started:
+                self.chat_display.start_streaming_message()
+                self.mw._chat_streaming_started = True
+            self.chat_display.update_streaming_message(f"\n⚠️ {err}")
             self.chat_display.end_streaming_message()
             self.mw._on_chat_finished()
 

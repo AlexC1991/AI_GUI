@@ -31,14 +31,23 @@ class DeepSeekProvider(BaseProvider):
             print(f"DeepSeek configuration error: {e}")
             self._configured = False
 
+    # Exclude non-chat models (embedding, etc.)
+    _EXCLUDED_PATTERNS = ["embedding"]
+
     @staticmethod
     def list_available_models(api_key: str) -> list[str]:
-        """Fetch models from DeepSeek API."""
+        """Fetch chat-compatible models from DeepSeek API."""
         if not OPENAI_AVAILABLE: return []
         try:
             client = OpenAI(api_key=api_key, base_url="https://api.deepseek.com")
             models = client.models.list()
-            return [m.id for m in models.data]
+            result = []
+            for m in models.data:
+                mid = m.id.lower()
+                if any(pat in mid for pat in DeepSeekProvider._EXCLUDED_PATTERNS):
+                    continue
+                result.append(m.id)
+            return result
         except Exception as e:
             print(f"Error fetching DeepSeek models: {e}")
             return []

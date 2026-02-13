@@ -31,14 +31,23 @@ class MistralProvider(BaseProvider):
             print(f"Mistral configuration error: {e}")
             self._configured = False
 
+    # Exclude non-chat models (embedding, moderation, OCR, etc.)
+    _EXCLUDED_PATTERNS = ["embed", "moderation", "ocr"]
+
     @staticmethod
     def list_available_models(api_key: str) -> list[str]:
-        """Fetch models from Mistral AI."""
+        """Fetch chat-compatible models from Mistral AI."""
         if not OPENAI_AVAILABLE: return []
         try:
             client = OpenAI(api_key=api_key, base_url="https://api.mistral.ai/v1")
             models = client.models.list()
-            return [m.id for m in models.data]
+            result = []
+            for m in models.data:
+                mid = m.id.lower()
+                if any(pat in mid for pat in MistralProvider._EXCLUDED_PATTERNS):
+                    continue
+                result.append(m.id)
+            return result
         except Exception as e:
             print(f"Error fetching Mistral models: {e}")
             return []

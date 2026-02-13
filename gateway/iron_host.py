@@ -487,44 +487,44 @@ async def list_llm_models(request: Request):
     except Exception:
         pass
 
-    # --- PROVIDER models (Gemini, OpenAI, etc.) ---
+    # --- PROVIDER models (all registered: Gemini, OpenAI, OpenRouter, DeepSeek, etc.) ---
     provider_models = []
     try:
         from utils.config_manager import ConfigManager
-        llm_cfg = ConfigManager.load_config().get("llm", {})
+        from providers import PROVIDER_REGISTRY
 
-        # Gemini
-        gemini_key = llm_cfg.get("api_key", "")
-        if gemini_key:
+        config = ConfigManager.load_config()
+        llm_cfg = config.get("llm", {})
+        providers_cfg = llm_cfg.get("providers", {})
+
+        for cfg_key, (cls, display_name) in PROVIDER_REGISTRY.items():
+            api_key = ConfigManager.get_provider_key(cfg_key)
+            if not api_key:
+                continue
+
             try:
-                from providers.gemini_provider import GeminiProvider
-                GeminiProvider.clear_model_cache()
-                for name in GeminiProvider.list_available_models(gemini_key):
+                # Use selected models from config if available, else fetch from API
+                selected = providers_cfg.get(cfg_key, {}).get("models", [])
+                if selected:
+                    model_ids = selected
+                else:
+                    model_ids = cls.list_available_models(api_key=api_key)
+
+                for name in model_ids:
+                    # Clean up display name
+                    display = name.replace("models/", "")
+                    if "/" in display:
+                        display = display.split("/", 1)[1]  # OpenRouter: strip company prefix
+
                     provider_models.append({
                         "name": name,
-                        "display": name.replace("models/", ""),
+                        "display": display,
                         "size_gb": 0,
                         "source": "provider",
-                        "provider": "Gemini"
+                        "provider": display_name
                     })
             except Exception as e:
-                print(f"[IronGate] Could not load Gemini models: {e}")
-
-        # OpenAI
-        openai_key = llm_cfg.get("openai_api_key", "")
-        if openai_key:
-            try:
-                from providers.openai_provider import OpenAIProvider
-                for name in OpenAIProvider.CHAT_MODELS:
-                    provider_models.append({
-                        "name": name,
-                        "display": name,
-                        "size_gb": 0,
-                        "source": "provider",
-                        "provider": "OpenAI"
-                    })
-            except Exception as e:
-                print(f"[IronGate] Could not load OpenAI models: {e}")
+                print(f"[IronGate] Could not load {display_name} models: {e}")
 
     except Exception as e:
         print(f"[IronGate] Provider model loading error: {e}")
@@ -585,10 +585,11 @@ async def list_models(request: Request):
     # --- Cloud image generation models (Gemini + OpenAI) ---
     try:
         from utils.config_manager import ConfigManager
-        llm_cfg = ConfigManager.load_config().get("llm", {})
+
+        gemini_key = ConfigManager.get_provider_key("gemini")
+        openai_key = ConfigManager.get_provider_key("openai")
 
         # Gemini image models
-        gemini_key = llm_cfg.get("api_key", "")
         if gemini_key:
             try:
                 from providers.gemini_provider import GeminiProvider
@@ -609,7 +610,6 @@ async def list_models(request: Request):
                 print(f"[IronGate] Could not load Gemini image models: {e}")
 
         # OpenAI image models (DALL-E)
-        openai_key = llm_cfg.get("openai_api_key", "")
         if openai_key:
             try:
                 from providers.openai_provider import OpenAIProvider
@@ -692,7 +692,7 @@ async def generate_image_api(request: Request):
         if model.startswith("gemini-"):
             try:
                 from utils.config_manager import ConfigManager
-                api_key = ConfigManager.load_config().get("llm", {}).get("api_key", "")
+                api_key = ConfigManager.get_provider_key("gemini")
                 if not api_key:
                     return JSONResponse({"error": "No Gemini API key configured"}, 400)
 
@@ -740,7 +740,7 @@ async def generate_image_api(request: Request):
         if model.startswith("dall-e") or model.startswith("gpt-image"):
             try:
                 from utils.config_manager import ConfigManager
-                api_key = ConfigManager.load_config().get("llm", {}).get("openai_api_key", "")
+                api_key = ConfigManager.get_provider_key("openai")
                 if not api_key:
                     return JSONResponse({"error": "No OpenAI API key configured"}, 400)
 
@@ -860,14 +860,13 @@ async def generate_video_api(request: Request):
         aspect = data.get("aspect", "16:9")
 
         from utils.config_manager import ConfigManager
-        llm_cfg = ConfigManager.load_config().get("llm", {})
 
         output_dir = SHARED_PATHS["output_dir"]
         os.makedirs(output_dir, exist_ok=True)
 
         # --- Sora (OpenAI) ---
         if model.startswith("sora-"):
-            api_key = llm_cfg.get("openai_api_key", "")
+            api_key = ConfigManager.get_provider_key("openai")
             if not api_key:
                 return JSONResponse({"error": "No OpenAI API key configured"}, 400)
 
@@ -893,7 +892,7 @@ async def generate_video_api(request: Request):
 
         # --- Veo (Gemini) ---
         elif model.startswith("veo-"):
-            api_key = llm_cfg.get("api_key", "")
+            api_key = ConfigManager.get_provider_key("gemini")
             if not api_key:
                 return JSONResponse({"error": "No Gemini API key configured"}, 400)
 

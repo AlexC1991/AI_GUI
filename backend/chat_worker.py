@@ -199,4 +199,11 @@ class ChatWorker(QThread):
             self.chat_finished.emit()
 
         except Exception as e:
-            self.error.emit(str(e))
+            # Add provider/model context to error messages for clarity
+            err_str = str(e)
+            provider = self.provider_type or "Unknown"
+            model = self.model_name or "Unknown"
+            if "not a valid model" in err_str.lower() or "model_not_found" in err_str.lower() or "does not exist" in err_str.lower():
+                self.error.emit(f"[{provider}] Model '{model}' is not available for chat. Re-fetch models in Settings to update the list.")
+            else:
+                self.error.emit(f"[{provider}] {err_str}")

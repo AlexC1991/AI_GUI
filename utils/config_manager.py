@@ -164,6 +164,36 @@ class ConfigManager:
 
         return config
 
+    # ── Provider Key Helpers ──────────────────────────────────
+
+    @staticmethod
+    def get_provider_key(provider_cfg_key):
+        """Get API key for a provider by its config key (e.g. 'gemini', 'openai').
+
+        Reads from the canonical location: llm.providers.<key>.api_key
+        Falls back to legacy flat keys for backward compatibility.
+        """
+        config = ConfigManager.load_config()
+        llm = config.get("llm", {})
+        providers = llm.get("providers", {})
+
+        # Canonical location
+        key = providers.get(provider_cfg_key, {}).get("api_key", "")
+        if key:
+            return key
+
+        # Legacy fallback
+        _legacy_map = {
+            "gemini": "api_key",
+            "openai": "openai_api_key",
+            "anthropic": "anthropic_api_key",
+        }
+        legacy_field = _legacy_map.get(provider_cfg_key)
+        if legacy_field:
+            return llm.get(legacy_field, "")
+
+        return ""
+
     # ── Favorites ──────────────────────────────────────────────
 
     @staticmethod

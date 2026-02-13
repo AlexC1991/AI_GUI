@@ -549,7 +549,7 @@ class ImageGenView(QWidget):
         cloud_display_names = []
 
         # Gemini
-        gemini_api_key = llm_cfg.get("api_key", "")
+        gemini_api_key = ConfigManager.get_provider_key("gemini")
         if gemini_api_key:
             try:
                 from providers.gemini_provider import GeminiProvider
@@ -560,7 +560,7 @@ class ImageGenView(QWidget):
                 print(f"[ImageGen] Could not load Gemini image models: {e}")
 
         # OpenAI (DALL-E)
-        openai_api_key = llm_cfg.get("openai_api_key", "")
+        openai_api_key = ConfigManager.get_provider_key("openai")
         if openai_api_key:
             try:
                 from providers.openai_provider import OpenAIProvider
@@ -1027,10 +1027,15 @@ class ImageGenView(QWidget):
             "Output ONLY the comma-separated prompt tags. Do not output any conversational text."
         )
         
+        # Resolve correct API key for the chosen provider
+        _enhancer_key_map = {"Gemini": "gemini", "OpenAI": "openai"}
+        _enhancer_cfg_key = _enhancer_key_map.get(provider, "")
+        enhancer_api_key = ConfigManager.get_provider_key(_enhancer_cfg_key) if _enhancer_cfg_key else ""
+
         self.enhancer.setup(
             provider_type=provider,
             model_name=api_model,
-            api_key=llm_cfg.get("api_key", ""),
+            api_key=enhancer_api_key,
             prompt=f"Enhance this prompt for high quality image generation: '{original}'",
             history=[],
             system_prompt=system_prompt
