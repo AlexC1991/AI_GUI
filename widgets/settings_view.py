@@ -1078,63 +1078,6 @@ class SettingsView(QScrollArea):
         dlg = ModelManagerDialog(self)
         dlg.exec()
 
-    def save_llm_settings(self):
-        cfg = self.config
-        if "llm" not in cfg:
-            cfg["llm"] = {}
-
-        cfg["llm"]["api_key"] = self.api_key_input.text().strip()
-        cfg["llm"]["openai_api_key"] = self.openai_key_input.text().strip()
-        cfg["llm"]["anthropic_api_key"] = self.anthropic_key_input.text().strip()
-        cfg["llm"]["local_model_dir"] = self.txt_llm_path.text()
-        cfg["llm"]["cache_dir"] = self.txt_cache_path.text()
-
-        ConfigManager.save_config(cfg)
-        self.llm_settings_saved.emit()
-        QMessageBox.information(self, "Settings Saved", "LLM settings updated successfully!")
-
-    def create_image_section(self):
-        group = QGroupBox("Image Generation Paths")
-        layout = QVBoxLayout(group)
-        layout.setSpacing(10)
-        layout.setContentsMargins(20, 35, 20, 20)
-        
-        img_cfg = self.config.get("image", {})
-
-        layout.addWidget(QLabel("Output Directory:"))
-        lyt, self.txt_out_dir = self.create_file_browser_row(img_cfg.get("output_dir", "outputs/images"))
-        layout.addLayout(lyt)
-
-        layout.addWidget(QLabel("Checkpoints Directory:"))
-        lyt, self.txt_ckpt_dir = self.create_file_browser_row(img_cfg.get("checkpoint_dir", "models/checkpoints"))
-        layout.addLayout(lyt)
-
-        layout.addWidget(QLabel("LoRA Directory:"))
-        lyt, self.txt_lora_dir = self.create_file_browser_row(img_cfg.get("lora_dir", "models/loras"))
-        layout.addLayout(lyt)
-
-        layout.addWidget(QLabel("VAE Directory:"))
-        lyt, self.txt_vae_dir = self.create_file_browser_row(img_cfg.get("vae_dir", "models/vae"))
-        layout.addLayout(lyt)
-
-        layout.addWidget(QLabel("Text Encoder Directory:"))
-        lyt, self.txt_text_enc_dir = self.create_file_browser_row(img_cfg.get("text_encoder_dir", "models/text_encoders"))
-        layout.addLayout(lyt)
-
-        # Prompt Enhancement Model
-        layout.addWidget(QLabel("Prompt Enhancement Model:"))
-        self.img_model_combo = QComboBox()
-        self.img_model_combo.addItems(["Llama 3 (8B)", "Mistral 7B", "Gemini Pro (API)"])
-        layout.addWidget(self.img_model_combo)
-
-        # Apply
-        apply_btn = QPushButton("Apply Image Settings")
-        apply_btn.setObjectName("ApplyBtn")
-        apply_btn.clicked.connect(self.save_image_settings)
-        layout.addWidget(apply_btn, 0, Qt.AlignRight)
-
-        self.main_layout.addWidget(group)
-        
     def save_image_settings(self):
         cfg = self.config
         if "image" not in cfg: cfg["image"] = {}
