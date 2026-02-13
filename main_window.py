@@ -238,9 +238,8 @@ class MainWindow(QMainWindow):
         else:
             self.chat_view.chat_display.rewrite_last_message("Here are the generated files:", history_text=content)
 
-        # Generate Cards
+        # Generate Cards (accumulate across conversation — don't clear)
         from widgets.file_card import FileCardRow
-        self.code_panel.clear_files()
         card_row = FileCardRow()
         for lang, code, filename in real_blocks:
             self.code_panel.add_file(filename, code, lang, auto_open=False)
@@ -249,8 +248,17 @@ class MainWindow(QMainWindow):
         self.chat_view.chat_display.insert_widget_after_last_message(card_row)
 
     def _on_file_card_clicked(self, filename, content, language):
+        """Open a file card in the code panel — works for any message in history."""
+        # Ensure this file is loaded into the panel (may be from an older message)
+        if filename not in self.code_panel.files:
+            self.code_panel.add_file(filename, content, language, auto_open=False)
+        else:
+            # Update content in case it was re-generated
+            self.code_panel.files[filename] = content
         self.code_panel.file_selector.setCurrentText(filename)
-        if self.code_panel.width() == 0: self.code_panel.slide_in()
+        self.code_panel._on_file_changed()
+        if self.code_panel.width() == 0:
+            self.code_panel.slide_in()
 
     def handle_mode_switch(self, mode):
         idx = 0

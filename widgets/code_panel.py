@@ -154,7 +154,25 @@ class CodePanel(QWidget):
     # ============================================
 
     def add_file(self, filename, content, language="", auto_open=True):
-        """Add a file to the panel. Set auto_open=False to load silently."""
+        """Add a file to the panel. Set auto_open=False to load silently.
+        If filename already exists with different content, appends a counter.
+        """
+        # Deduplicate: if same name + same content, just select it
+        if filename in self.files and self.files[filename] == content:
+            self.file_selector.setCurrentText(filename)
+            self._on_file_changed()
+            if auto_open and self.width() == 0:
+                self.slide_in()
+            return
+
+        # If same name but different content, make unique
+        if filename in self.files:
+            base, ext = (filename.rsplit('.', 1) + [''])[:2]
+            counter = 2
+            while f"{base} ({counter}).{ext}" in self.files:
+                counter += 1
+            filename = f"{base} ({counter}).{ext}" if ext else f"{base} ({counter})"
+
         self.files[filename] = content
         if language:
             self.file_languages[filename] = language
