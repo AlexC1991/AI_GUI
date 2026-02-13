@@ -59,6 +59,7 @@ DEFAULT_CONFIG = {
         "output_dir": "outputs/images",
         "refiner_model": "None"
     },
+    "favorites": [],
     "remote": {
         "gpu_ip": "",
         "gpu_port": "8188",
@@ -162,3 +163,45 @@ class ConfigManager:
             ConfigManager.save_config(config)
 
         return config
+
+    # ── Favorites ──────────────────────────────────────────────
+
+    @staticmethod
+    def _favorite_key(model_data):
+        """Build a unique dedup key from model data dict."""
+        mode = model_data.get("mode", "provider")
+        provider = model_data.get("provider", "unknown")
+        filename = model_data.get("filename", model_data.get("display", ""))
+        return f"{mode}:{provider}:{filename}"
+
+    @staticmethod
+    def get_favorites():
+        config = ConfigManager.load_config()
+        return config.get("favorites", [])
+
+    @staticmethod
+    def is_favorite(model_data):
+        key = ConfigManager._favorite_key(model_data)
+        for fav in ConfigManager.get_favorites():
+            if ConfigManager._favorite_key(fav) == key:
+                return True
+        return False
+
+    @staticmethod
+    def toggle_favorite(model_data):
+        """Toggle a model's favorite status. Returns True if added, False if removed."""
+        config = ConfigManager.load_config()
+        favs = config.get("favorites", [])
+        key = ConfigManager._favorite_key(model_data)
+
+        for i, fav in enumerate(favs):
+            if ConfigManager._favorite_key(fav) == key:
+                favs.pop(i)
+                config["favorites"] = favs
+                ConfigManager.save_config(config)
+                return False
+
+        favs.append(model_data)
+        config["favorites"] = favs
+        ConfigManager.save_config(config)
+        return True

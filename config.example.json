@@ -91,6 +91,7 @@
         "output_dir": "outputs/images",
         "refiner_model": "None"
     },
+    "favorites": [],
     "remote": {
         "gpu_ip": "",
         "gpu_port": "8188",

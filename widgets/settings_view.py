@@ -747,7 +747,8 @@ class SettingsView(QScrollArea):
         
         # Selected Models
         v2 = QVBoxLayout()
-        v2.addWidget(QLabel("Selected (Max 5)"))
+        max_label = "Selected (Max 50)" if provider_key == "openrouter" else "Selected (Max 5)"
+        v2.addWidget(QLabel(max_label))
         sel_list = QListWidget()
         sel_list.setSelectionMode(QListWidget.MultiSelection)
         v2.addWidget(sel_list)
@@ -821,10 +822,12 @@ class SettingsView(QScrollArea):
         if not selected_items: return
 
         current_count = sel.count()
-        remaining_slots = 5 - current_count
-        
+        max_models = 50 if provider_key == "openrouter" else 5
+        remaining_slots = max_models - current_count
+
         if remaining_slots <= 0:
-            QMessageBox.warning(self, "Limit Reached", "You can only select up to 5 models per provider.")
+            limit_text = "50 models" if provider_key == "openrouter" else "5 models per provider"
+            QMessageBox.warning(self, "Limit Reached", f"You can only select up to {limit_text}.")
             return
 
         for item in selected_items:

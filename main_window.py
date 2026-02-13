@@ -411,23 +411,32 @@ class MainWindow(QMainWindow):
             config = ConfigManager.load_config()
             llm_cfg = config.get("llm", {})
             providers_cfg = llm_cfg.get("providers", {})
-            all_provider_models = []
 
             from providers import PROVIDER_REGISTRY
 
+            grouped = {}
             for cfg_key, (cls, display_name) in PROVIDER_REGISTRY.items():
                 prov_data = providers_cfg.get(cfg_key, {})
                 api_key = prov_data.get("api_key", "")
                 selected_models = prov_data.get("models", [])
 
-                if not api_key or not selected_models:
-                    continue
-
+                models_list = []
                 for name in selected_models:
-                    all_provider_models.append({"name": name, "provider": display_name})
+                    models_list.append({
+                        "mode": "provider",
+                        "display": name,
+                        "filename": name,
+                        "provider": display_name,
+                    })
 
-            if all_provider_models and hasattr(self, 'model_panel'):
-                self.model_panel.set_provider_models(all_provider_models)
+                grouped[cfg_key] = {
+                    "display_name": display_name,
+                    "has_key": bool(api_key),
+                    "models": models_list,
+                }
+
+            if hasattr(self, 'model_panel'):
+                self.model_panel.set_provider_models(grouped)
         except Exception as e:
             print(f"[MainWindow] Error loading provider models: {e}")
 
